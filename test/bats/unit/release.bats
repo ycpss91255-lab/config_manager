@@ -90,14 +90,15 @@ teardown() {
   rm -rf "${WORK}"
 }
 
-# 一份全綠的替身報表。
+# 一份全綠的替身報表。最後兩行（摘要行與判定行）照現行 acceptance.sh 的格式寫：release.sh
+# 靠這兩行分辨「一份報表」與「一段建置錯誤」（#377），格式不對的替身會被當成報表不能信。
 stub_green() {
   cat >"${ACCEPTANCE}" <<'STUB'
 #!/usr/bin/env bash
 printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
 printf '  檢查點 1  通過  ADR lint 可攔截\n'
-printf 'acceptance: v0.1.0 —— 5 通過／0 未通過／0 未涵蓋\n'
-printf 'acceptance: v0.1.0 通過\n'
+printf 'acceptance: v0.1.0 —— 5 通過／0 未通過／0 未涵蓋／0 人工待驗／0 已簽核\n'
+printf 'acceptance: v0.1.0 通過（--gate overall）\n'
 STUB
   chmod +x "${ACCEPTANCE}"
 }
@@ -109,8 +110,8 @@ stub_red() {
 printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
 printf '  檢查點 1  通過  ADR lint 可攔截\n'
 printf '  檢查點 3  未通過  修改清單檔後寫出，註解與欄位順序完整保留\n'
-printf 'acceptance: v0.1.0 —— 4 通過／1 未通過／0 未涵蓋\n'
-printf 'acceptance: v0.1.0 未通過\n'
+printf 'acceptance: v0.1.0 —— 4 通過／1 未通過／0 未涵蓋／0 人工待驗／0 已簽核\n'
+printf 'acceptance: v0.1.0 未通過（--gate overall）\n'
 exit 1
 STUB
   chmod +x "${ACCEPTANCE}"
@@ -171,6 +172,54 @@ stub_broken() {
 #!/usr/bin/env bash
 printf 'acceptance: 對照表 doc/acceptance-checkpoints.toml 有 1 條規格參照指不到東西\n' >&2
 exit 2
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
+# 以 <結束碼> 結束，輸出卻不是一份報表：在印出任何判定之前就停了（#377 重現到的就是這種
+# 輸出——建映像失敗時只有一段建置錯誤，結束碼是 docker 的 1）。
+stub_not_a_report() {
+  cat >"${ACCEPTANCE}" <<STUB
+#!/usr/bin/env bash
+printf 'acceptance: 建置 config_manager-test-tools:local\n'
+printf 'ERROR: failed to solve: process "/bin/sh -c apt-get update" did not complete successfully: exit code: 100\n' >&2
+exit $1
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
+# 有判定行、卻少了摘要行（#377）。一份跑完的報表兩行都有；這一個與下一個替身各缺一半，
+# 讓兩項核對各自有規格看著。
+stub_without_summary() {
+  cat >"${ACCEPTANCE}" <<'STUB'
+#!/usr/bin/env bash
+printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
+printf '  檢查點 3  未通過  修改清單檔後寫出，註解與欄位順序完整保留\n'
+printf 'acceptance: v0.1.0 未通過（--gate overall）\n'
+exit 1
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
+# 報表寫未通過、結束碼卻是 0（#377）：兩者對不上，說不出哪一個才是真的。
+stub_verdict_disagrees_with_exit() {
+  stub_red
+  sed -i 's/^exit 1$/exit 0/' "${ACCEPTANCE}"
+}
+
+# **真的** acceptance.sh，建映像那一步失敗（#377）。不真的建：PATH 上的假 docker 對任何呼叫
+# 都回 1，與假 gh 同一個手法。規格本身在映像裡跑、CM_IN_TEST_IMAGE 是設著的，設著它
+# acceptance.sh 就不去建映像，所以只對它拿掉。
+real_acceptance_build_fails() {
+  cat >"${STUB}/docker" <<'STUB'
+#!/usr/bin/env bash
+printf 'ERROR: failed to solve: process "/bin/sh -c apt-get update" did not complete successfully: exit code: 100\n' >&2
+exit 1
+STUB
+  chmod +x "${STUB}/docker"
+  cat >"${ACCEPTANCE}" <<STUB
+#!/usr/bin/env bash
+exec env -u CM_IN_TEST_IMAGE -u CM_TEST_LOCAL '${REPO_ROOT}/script/acceptance.sh' "\$@"
 STUB
   chmod +x "${ACCEPTANCE}"
 }
@@ -323,6 +372,16 @@ gh_was_called() {
   [[ "${output}" == *"檢查點 2  人工待驗"* ]]
 }
 
+@test "真的驗收報表只剩人工待驗時，rc 的 release 照常建立，標題標示未通過" {
+  # 報表完整、回 1，是真正的未通過（#377）：release.sh 核對報表的結構，替身報表的格式是
+  # 照著寫的，這一則確認真的報表通得過那道核對——否則每一個紅的 rc 都會被當成報表壞掉。
+  real_acceptance_with_manual_pending
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  [ "$(gh_value_after --title)" = "v0.1.0-rc1 — 驗收未通過" ]
+}
+
 # ── 覆蓋率 badge（#354）：在 tag 指的 commit 上重新量測，畫出來要與版控裡的逐位元組相同 ──
 
 @test "正式 tag，badge 的數字與重新量測不同時以 1 結束" {
@@ -426,6 +485,60 @@ gh_was_called() {
 
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"下一步："* ]]
+}
+
+@test "acceptance.sh 回 1 但輸出不是報表時，連 rc 都不建立 release" {
+  # 回 1 不等於未通過：建映像失敗也回 1，那時一條判定都沒有。當成未通過，rc 就會帶著一段
+  # 建置錯誤、標題寫「驗收未通過」發出去（#377 重現到的就是這樣）。
+  stub_not_a_report 1
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
+}
+
+@test "acceptance.sh 回 1 但輸出不是報表時以 2 結束——報表不能信，不是未通過" {
+  stub_not_a_report 1
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  [ "${status}" -eq 2 ]
+}
+
+@test "acceptance.sh 回 0 但輸出不是報表時，正式 tag 一個 release 都沒有建立" {
+  # 回 0 卻沒有「通過」的判定行，同樣說不出通過了什麼；正式 tag 在這裡發出去，是一個沒有
+  # 報表的正式版。
+  stub_not_a_report 0
+
+  run "${SCRIPT}" v0.1.0
+
+  ! gh_was_called
+}
+
+@test "輸出少了摘要行時，連 rc 都不建立 release" {
+  stub_without_summary
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
+}
+
+@test "結束碼與報表的判定行對不上時，正式 tag 一個 release 都沒有建立" {
+  # 回 0 而報表寫未通過：照結束碼發出去，就是一個附著「未通過」報表的正式版。
+  stub_verdict_disagrees_with_exit
+
+  run "${SCRIPT}" v0.1.0
+
+  ! gh_was_called
+}
+
+@test "真的 acceptance.sh 建映像失敗時，連 rc 都不建立 release" {
+  # 替身報表是照著 #377 的重現寫的；這一則讓真的 acceptance.sh 走到建映像那一步、在那裡失敗。
+  real_acceptance_build_fails
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
 }
 
 # ── rc 編號由既有 tag 推導 ────────────────────────────────────────────────
