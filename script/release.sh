@@ -21,6 +21,12 @@
 # 後者連 rc 都不建——一個附著壞掉報表的 release，與一份手寫的「已通過」表格一樣
 # 沒有證據力。兩者混成同一種處置，就分不出「還沒做完」與「沒有人在驗」。
 #
+# 結束碼本身不夠分辨（#377）。acceptance.sh 在 set -e 底下建映像，建不起來就以 docker 的
+# 結束碼結束——那也是 1，輸出卻只有一段建置錯誤、一條判定都沒有。所以 0 與 1 只在輸出真的
+# 是一份報表時才算數：一份跑完的報表最後一定有摘要行（各種判定的條數）與判定行，判定行要與
+# 結束碼一致。少了任何一行，就與 2 同一個處置。核對的是現行 acceptance.sh 印出的那兩行，
+# 不是寬鬆的比對：它的格式改了，這裡會擋下、大聲說報表不能信，而不是把它當成未通過發出去。
+#
 # ## 正式 tag 的閘門
 #
 # 非 rc 的 vX.Y.Z **只有報表全數通過才建得起來**。這一條由這裡擋，不靠人記得
@@ -80,14 +86,16 @@ usage() {
 
   rc tag    不論報表綠紅都建立 release，紅綠寫在標題上
   正式 tag  只有報表全數通過才建立；未通過時擋下，並指名是哪幾條檢查點
-  兩者皆是  報表本身壞掉（對照表對不上）時不建立 release
+  兩者皆是  報表本身壞掉（對照表對不上），或輸出不是一份完整的報表（例如建映像失敗）
+            時不建立 release
 
   --next <milestone>  印出下一個 rc tag 名，由既有 tag 推導。編號不由人工指定：
                       人工指定會撞號或跳號，而推上來的 rc 若不是這個名字會被擋下
 
   exit 0   release 建好了（或 --next 印完了）
   exit 1   正式 tag 的報表未通過，release 沒有建立
-  exit 2   用法錯誤、tag 格式認不得、rc 編號跳號、缺 gh，或報表本身壞掉
+  exit 2   用法錯誤、tag 格式認不得、rc 編號跳號、缺 gh，或報表本身壞掉（acceptance.sh
+           回 0、1 以外的碼，或輸出裡沒有摘要行、沒有與結束碼相符的判定行）
 
   覆蓋率 badge：在 <tag> 指的 commit 上重新量測，畫出這一版的 SVG，與 doc/badge/coverage.svg
   逐位元組比對。正式 tag 不一致或量不到就不建立 release；rc 照常建立，notes 寫明
@@ -172,6 +180,16 @@ _report_header() {
   printf '指令：script/acceptance.sh %s\n' "${milestone}"
   printf '複驗：git checkout %s && ./script/acceptance.sh %s\n' "${tag}" "${milestone}"
   printf '\n'
+}
+
+# acceptance.sh 的輸出是不是一份跑完的報表：有摘要行，也有與結束碼相符的判定行（#377）。
+# 以 here-string 餵給 grep，不用管線：grep -q 一找到就結束，pipefail 底下前面的 printf
+# 可能因 SIGPIPE 失敗，一份夠長的完整報表就會被誤判成不完整。
+_is_report() {
+  local body="$1" milestone="$2" verdict="$3"
+  local name="${milestone//./\\.}"
+  grep -qxE "acceptance: ${name} —— [0-9]+ 通過／[0-9]+ 未通過／[0-9]+ 未涵蓋／[0-9]+ 人工待驗／[0-9]+ 已簽核" <<<"${body}" &&
+    grep -qxF "acceptance: ${milestone} ${verdict}（--gate overall）" <<<"${body}"
 }
 
 _write_notes() {
@@ -267,6 +285,16 @@ _release() {
   local verdict='通過'
   if ((code != 0)); then
     verdict='未通過'
+  fi
+
+  # 0 與 1 只在輸出是一份報表時才算數（#377，見檔頭）：建映像失敗也回 1，那時一條判定都沒有。
+  if ! _is_report "${body}" "${MILESTONE}" "${verdict}"; then
+    printf '%s\n' "${body}" >&2
+    printf 'release: %s 的驗收輸出不是一份完整的報表（acceptance.sh 回 %d，輸出裡卻沒有摘要行，或沒有「%s」的判定行），%s 不建立 release\n' \
+      "${MILESTONE}" "${code}" "${verdict}" "${tag}" >&2
+    printf 'release: 那不是「%s」——建置或執行在印出判定之前就停了，沒有一條判定可以放進 release\n' "${verdict}" >&2
+    printf 'release: 下一步：看上面的輸出修好建置或執行（例如建映像失敗），重推這個 tag\n' >&2
+    return 2
   fi
 
   # 人工待驗也列（#355）：自動檢查全綠、只差人工簽核時，沒有未通過或未涵蓋可列，不列它，
