@@ -90,14 +90,15 @@ teardown() {
   rm -rf "${WORK}"
 }
 
-# 一份全綠的替身報表。
+# 一份全綠的替身報表。最後兩行（摘要行與判定行）照現行 acceptance.sh 的格式寫：release.sh
+# 靠這兩行分辨「一份報表」與「一段建置錯誤」（#377），格式不對的替身會被當成報表不能信。
 stub_green() {
   cat >"${ACCEPTANCE}" <<'STUB'
 #!/usr/bin/env bash
 printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
 printf '  檢查點 1  通過  ADR lint 可攔截\n'
-printf 'acceptance: v0.1.0 —— 5 通過／0 未通過／0 未涵蓋\n'
-printf 'acceptance: v0.1.0 通過\n'
+printf 'acceptance: v0.1.0 —— 5 通過／0 未通過／0 未涵蓋／0 人工待驗／0 已簽核\n'
+printf 'acceptance: v0.1.0 通過（--gate overall）\n'
 STUB
   chmod +x "${ACCEPTANCE}"
 }
@@ -109,8 +110,8 @@ stub_red() {
 printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
 printf '  檢查點 1  通過  ADR lint 可攔截\n'
 printf '  檢查點 3  未通過  修改清單檔後寫出，註解與欄位順序完整保留\n'
-printf 'acceptance: v0.1.0 —— 4 通過／1 未通過／0 未涵蓋\n'
-printf 'acceptance: v0.1.0 未通過\n'
+printf 'acceptance: v0.1.0 —— 4 通過／1 未通過／0 未涵蓋／0 人工待驗／0 已簽核\n'
+printf 'acceptance: v0.1.0 未通過（--gate overall）\n'
 exit 1
 STUB
   chmod +x "${ACCEPTANCE}"
@@ -321,6 +322,16 @@ gh_was_called() {
   run "${SCRIPT}" v0.1.0
 
   [[ "${output}" == *"檢查點 2  人工待驗"* ]]
+}
+
+@test "真的驗收報表只剩人工待驗時，rc 的 release 照常建立，標題標示未通過" {
+  # 報表完整、回 1，是真正的未通過（#377）：release.sh 核對報表的結構，替身報表的格式是
+  # 照著寫的，這一則確認真的報表通得過那道核對——否則每一個紅的 rc 都會被當成報表壞掉。
+  real_acceptance_with_manual_pending
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  [ "$(gh_value_after --title)" = "v0.1.0-rc1 — 驗收未通過" ]
 }
 
 # ── 覆蓋率 badge（#354）：在 tag 指的 commit 上重新量測，畫出來要與版控裡的逐位元組相同 ──
