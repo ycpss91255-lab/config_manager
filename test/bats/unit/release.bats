@@ -188,6 +188,25 @@ STUB
   chmod +x "${ACCEPTANCE}"
 }
 
+# 有判定行、卻少了摘要行（#377）。一份跑完的報表兩行都有；這一個與下一個替身各缺一半，
+# 讓兩項核對各自有規格看著。
+stub_without_summary() {
+  cat >"${ACCEPTANCE}" <<'STUB'
+#!/usr/bin/env bash
+printf 'acceptance: v0.1.0 資料層與唯讀介面 —— 5 條檢查點\n'
+printf '  檢查點 3  未通過  修改清單檔後寫出，註解與欄位順序完整保留\n'
+printf 'acceptance: v0.1.0 未通過（--gate overall）\n'
+exit 1
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
+# 報表寫未通過、結束碼卻是 0（#377）：兩者對不上，說不出哪一個才是真的。
+stub_verdict_disagrees_with_exit() {
+  stub_red
+  sed -i 's/^exit 1$/exit 0/' "${ACCEPTANCE}"
+}
+
 # **真的** acceptance.sh，建映像那一步失敗（#377）。不真的建：PATH 上的假 docker 對任何呼叫
 # 都回 1，與假 gh 同一個手法。規格本身在映像裡跑、CM_IN_TEST_IMAGE 是設著的，設著它
 # acceptance.sh 就不去建映像，所以只對它拿掉。
@@ -490,6 +509,23 @@ gh_was_called() {
   # 回 0 卻沒有「通過」的判定行，同樣說不出通過了什麼；正式 tag 在這裡發出去，是一個沒有
   # 報表的正式版。
   stub_not_a_report 0
+
+  run "${SCRIPT}" v0.1.0
+
+  ! gh_was_called
+}
+
+@test "輸出少了摘要行時，連 rc 都不建立 release" {
+  stub_without_summary
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
+}
+
+@test "結束碼與報表的判定行對不上時，正式 tag 一個 release 都沒有建立" {
+  # 回 0 而報表寫未通過：照結束碼發出去，就是一個附著「未通過」報表的正式版。
+  stub_verdict_disagrees_with_exit
 
   run "${SCRIPT}" v0.1.0
 
