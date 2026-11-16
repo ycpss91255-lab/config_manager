@@ -1311,6 +1311,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/lint_checkpoints.sh` | `test/bats/unit/lint_checkpoints.bats` |
 | `script/lint_test_interfaces.sh` | `test/bats/unit/lint_test_interfaces.bats` |
 | `script/coverage_gate.sh` | `test/bats/unit/coverage_gate.bats` |
+| `script/coverage_badge.sh` | `test/bats/unit/coverage_badge.bats` |
 | `script/ci_rollup.sh` | `test/bats/unit/ci_rollup.bats` |
 | `script/acceptance.sh` | `test/bats/unit/acceptance.bats` |
 | `script/release.sh` | `test/bats/unit/release.bats` |
@@ -1396,7 +1397,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `--part fast` | 交給 pytest 的是那兩支以外的全部規格 |
 | 一段記下的 `ids.txt` | 就是交給 pytest 的那一份參數，不是另外算一次的清單 |
 | 分到零條規格的一段 | 以 2 結束，**不交給 pytest**——空的參數會讓 pytest 跑全部 |
-| `--part gate`，各段齊全 | web 覆蓋率合併時沒被執行到的行取交集；每一段的 Python 資料都進 `coverage combine`；交給 `coverage_gate.sh` |
+| `--part gate`，各段齊全 | web 覆蓋率合併時沒被執行到的行取交集；每一段的 Python 資料都進 `coverage combine`；交給 `coverage_gate.sh`，並帶 `--summary coverage/summary`（#354） |
 | `--part gate`，有規格沒被跑到、被跑兩次、少一份分片、少了整組 api、少一份 web 報告 | 非零結束並指名，**不判覆蓋率** |
 
 **「一條規格自己跳過」與「一個層級一條規格都沒有」，與前面的缺工具那幾條是同一個保證的兩半。** 前面擋的是「工具不在卻回報通過」，後面擋的是
@@ -1544,6 +1545,10 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `--next <milestone>` | 印出下一個 rc tag 名；一個 rc 都還沒有時是 `rc1` |
 | 認不得的 tag 格式 | 非零結束，不建立 release |
 | `gh` 不在 `PATH` 上 | 大聲失敗——一支建不了 release 卻回 0 的腳本就是不變式 2 的靜默通過 |
+| 覆蓋率 badge（#354）：在 tag 指的 commit 上重新量測，以 `coverage_badge.sh <版本> <tsv>` 畫出來的 SVG 與 `doc/badge/coverage.svg` 逐位元組相同 | 照驗收報表的判定處理，badge 不另外擋 |
+| 正式 tag，badge 與重新量測畫出來的不同（數字不同或版本不同） | **不建立 release**（gh 沒有被呼叫），以 1 結束，訊息指出不同、列出差異與下一步 |
+| rc tag，badge 與重新量測畫出來的不同 | release **仍然建立**，release notes 寫明 badge 與實測不同 |
+| 重新量測失敗（量測指令非零結束、沒有寫出 tsv，或某一層沒量到） | 正式 tag 不建立 release、以 1 結束；rc 照樣建立，notes 寫明沒有量到 |
 
 **「報表未通過」與「報表壞掉」分得開，處置也不同。** 前者是「這一版還沒做完」，
 而那正是 rc 要記錄的事——**擋下紅色的 rc 等於讓 N 無法遞增**，rc 也就失去意義。
@@ -1556,6 +1561,34 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 這支腳本。**例外只有上表「真的 `acceptance.sh`」那一列**：它要驗的正是兩支串起來時
 `release.sh` 用的是整體閘門，替身報表驗不到這件事。它餵的仍是替身對照表與替身規格，
 不碰真的對照表（#355）。
+
+**覆蓋率的重新量測同樣以替身代替**（`CM_RELEASE_COVERAGE` 覆寫點：一個指令，收一個參數＝
+要寫出 `coverage.tsv` 的位置，#354）。預設的量測依序跑 `script/test.sh --part fast`、
+`--part api 1/1`、`--part web 1/1`、`--part gate`，那是整組測試，規格不跑它；預設這條路徑
+要等第一次真的發版、或另外以假的 gh 實跑才驗得到。畫 SVG 的是真的 `coverage_badge.sh`。
+
+**`coverage_gate.sh --summary` 與 `script/coverage_badge.sh` 被觀察的是「覆蓋率的數字怎麼被呈現」**
+（#354）。門檻本身怎麼判不變，由上面 `coverage_gate.sh` 那幾條擋著；這裡多的是兩件事：判完之後把
+四層的數字寫成給人看的表格（CI 放進 Job Summary）與給工具讀的 tsv，以及把 tsv 畫成進版控的
+`doc/badge/coverage.svg`。輸入同樣由 `CM_COVERAGE_JSON`／`CM_WEB_COVERAGE` 與手寫的 tsv 餵進去，
+真的覆蓋率不參與。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `coverage_gate.sh --summary <dir>`，四層都量到 | `<dir>/coverage.md` 是一張表：四層各一列，百分比（兩位小數）、執行過的行／總行數、下限、判定；`<dir>/coverage.tsv` 每層一行，以 tab 分開：層名、執行過的行、總行數、下限、判定（`pass`／`below`） |
+| 有一層低於下限 | 兩份照樣寫出，那一層是「未達」／`below`；結束碼照舊非零 |
+| 判定用原始數值 | 8499/10000（84.99%）是未達，不因四捨五入而放行 |
+| 某一層沒量到（報告不存在、一行可量的都沒有） | 那一層寫「沒量到」／`unmeasured`，**不寫成 0%** |
+| `coverage_badge.sh <vX.Y.Z> <tsv>` | 在 stdout 印出 SVG：四層各自的百分比（一位小數）與版本；四層都達標是綠色，有一層未達是紅色 |
+| 同一組數值與版本 | 印出的 SVG 與規格裡寫死的預期內容逐位元組相同；內容只由版本與四層的數字決定，不含日期或時間 |
+| `coverage_badge.sh --unmeasured <vX.Y.Z>` | 印出寫著 `not measured (vX.Y.Z)` 的灰色 SVG |
+| tsv 裡有一層 `unmeasured` | 以 1 結束、不印 SVG，並指名那一層——沒量完整的數字不畫成 badge |
+| tsv 少一層、多一層，或一行的欄位不對 | 以 2 結束、不印 SVG，並指名是哪一行 |
+| 版本不是 `vX.Y.Z` | 以 2 結束、不印 SVG |
+
+**badge 顯示一位小數，門檻用原始數值判。** 兩者分開：badge 是給人看的摘要，門檻是 `coverage_gate.sh`
+的事；84.96% 在 badge 上可能顯示成 85.0%，但它的顏色是紅的，CI 也照樣擋。**日常 PR 不核對
+`doc/badge/coverage.svg`**：它隨 milestone 收尾更新、標明版本（維護者 11/14 在 #354 的定案）。
 
 **每條規則都要有一個會觸發它的案例。** 一支所有 FAIL 路徑都沒被執行過的 lint，
 它擋得住什麼是沒有證據的——規則看起來在運作，而那正是回歸風險最高的形狀。
@@ -1721,6 +1754,7 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/check_file.sh` | T19（單檔檢查的派工規則） | 已落地 |
 | `script/test.sh` | T19（缺工具不得靜默通過，#72；worktree 的 git 目錄要掛進容器，#103；分段執行與映像的快取，#358） | 已落地 |
 | `script/coverage_gate.sh` | T19（每層門檻各自獨立、指名的只有轉紅的那一層） | 已落地 |
+| `script/coverage_badge.sh` | T19（badge 只由版本與四層的數字決定、沒量完整的數字不畫，#354） | 已落地 |
 | `script/ci_rollup.sh` | T19（該跑卻被跳過不是通過、workflow 有而 needs 沒列的 job 要擋，#358） | 已落地（CI 的 `ci-rollup` job 執行，不由 `test.sh` 執行） |
 | `script/acceptance.sh` | T19（未涵蓋不是通過、指到不存在的規格要失敗，#148） | 已落地 |
 | `script/release.sh` | T19（紅的 rc 仍發得出去、紅的正式 tag 發不出去，#150） | 已落地 |
