@@ -176,6 +176,35 @@ STUB
   chmod +x "${ACCEPTANCE}"
 }
 
+# 以 <結束碼> 結束，輸出卻不是一份報表：在印出任何判定之前就停了（#377 重現到的就是這種
+# 輸出——建映像失敗時只有一段建置錯誤，結束碼是 docker 的 1）。
+stub_not_a_report() {
+  cat >"${ACCEPTANCE}" <<STUB
+#!/usr/bin/env bash
+printf 'acceptance: 建置 config_manager-test-tools:local\n'
+printf 'ERROR: failed to solve: process "/bin/sh -c apt-get update" did not complete successfully: exit code: 100\n' >&2
+exit $1
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
+# **真的** acceptance.sh，建映像那一步失敗（#377）。不真的建：PATH 上的假 docker 對任何呼叫
+# 都回 1，與假 gh 同一個手法。規格本身在映像裡跑、CM_IN_TEST_IMAGE 是設著的，設著它
+# acceptance.sh 就不去建映像，所以只對它拿掉。
+real_acceptance_build_fails() {
+  cat >"${STUB}/docker" <<'STUB'
+#!/usr/bin/env bash
+printf 'ERROR: failed to solve: process "/bin/sh -c apt-get update" did not complete successfully: exit code: 100\n' >&2
+exit 1
+STUB
+  chmod +x "${STUB}/docker"
+  cat >"${ACCEPTANCE}" <<STUB
+#!/usr/bin/env bash
+exec env -u CM_IN_TEST_IMAGE -u CM_TEST_LOCAL '${REPO_ROOT}/script/acceptance.sh' "\$@"
+STUB
+  chmod +x "${ACCEPTANCE}"
+}
+
 # 假 gh 收到的參數裡，緊接在 <旗標> 後面的那一個值。
 gh_value_after() {
   local want="$1" previous="" line
@@ -437,6 +466,43 @@ gh_was_called() {
 
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"下一步："* ]]
+}
+
+@test "acceptance.sh 回 1 但輸出不是報表時，連 rc 都不建立 release" {
+  # 回 1 不等於未通過：建映像失敗也回 1，那時一條判定都沒有。當成未通過，rc 就會帶著一段
+  # 建置錯誤、標題寫「驗收未通過」發出去（#377 重現到的就是這樣）。
+  stub_not_a_report 1
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
+}
+
+@test "acceptance.sh 回 1 但輸出不是報表時以 2 結束——報表不能信，不是未通過" {
+  stub_not_a_report 1
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  [ "${status}" -eq 2 ]
+}
+
+@test "acceptance.sh 回 0 但輸出不是報表時，正式 tag 一個 release 都沒有建立" {
+  # 回 0 卻沒有「通過」的判定行，同樣說不出通過了什麼；正式 tag 在這裡發出去，是一個沒有
+  # 報表的正式版。
+  stub_not_a_report 0
+
+  run "${SCRIPT}" v0.1.0
+
+  ! gh_was_called
+}
+
+@test "真的 acceptance.sh 建映像失敗時，連 rc 都不建立 release" {
+  # 替身報表是照著 #377 的重現寫的；這一則讓真的 acceptance.sh 走到建映像那一步、在那裡失敗。
+  real_acceptance_build_fails
+
+  run "${SCRIPT}" v0.1.0-rc1
+
+  ! gh_was_called
 }
 
 # ── rc 編號由既有 tag 推導 ────────────────────────────────────────────────
