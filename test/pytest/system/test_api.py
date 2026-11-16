@@ -4508,10 +4508,12 @@ def test_a_release_that_arrives_during_a_write_waits_for_it(api_alone, sources_r
 def test_with_the_default_on_wait_a_queued_release_still_waits_for_the_write(
     api_alone, sources_root, monkeypatch
 ):
-    # ②的同一個情境，但**不換掉** `on_wait`（預設的那一個，什麼都不做）：排隊沒有人觀察時，照樣依到達
-    # 順序處理——寫入 200、排在後面的釋放 released:true。「釋放已拿到號碼牌、正要排隊」從服務的時鐘看：
-    # 拿號碼牌的同一刻，在鎖裡讀一次時鐘（`LockBox.locked`）。其餘排隊規格都換掉了 on_wait，預設那一個
-    # 原本只在 web 規格碰巧競爭時才被執行到，覆蓋率因此時有時無（#378）。
+    # ②的同一個情境，但**不換掉** `on_wait`（預設的那一個，什麼都不做）：
+    # 排隊沒有人觀察時，照樣依到達順序處理——寫入 200、排在後面的釋放
+    # released:true。「釋放已拿到號碼牌、正要排隊」從服務的時鐘看：拿號碼牌的
+    # 同一刻，在鎖裡讀一次時鐘（`LockBox.locked`）。其餘排隊規格都換掉了
+    # on_wait，預設那一個原本只在 web 規格碰巧競爭時才被執行到，覆蓋率因此
+    # 時有時無（#378）。
     base, box = api_alone
     entry, session = _ready(base, sources_root, "f23_default_on_wait.yaml")
     token = session["token"]
