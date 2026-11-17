@@ -144,14 +144,12 @@ VARS=()
 # ── bridge 網路：疊上 compose.bridge.yaml（定案 1、3）────────────────────────
 
 @test "疊上 bridge 檔之後兩個服務都是 bridge 網路" {
-  VARS=(CM_HOSTNAME=amr01)
   resolve compose.yaml compose.bridge.yaml
 
   [ "$(ask '[s[name]["network_mode"] for name in sorted(s)]')" = "['bridge', 'bridge']" ]
 }
 
 @test "bridge 下埠號對應的主機端只綁 127.0.0.1" {
-  VARS=(CM_HOSTNAME=amr01)
   resolve compose.yaml compose.bridge.yaml
 
   [ "$(ask '[(name, [(p["host_ip"], p["published"], p["target"]) for p in s[name]["ports"]]) for name in sorted(s)]')" \
@@ -161,42 +159,42 @@ VARS=()
 @test "bridge 下服務在容器內聽 0.0.0.0，對應進來的連線才到得了" {
   # 容器內聽 127.0.0.1 的話，docker 把主機的埠轉到容器的網卡上，那裡沒有人在聽。對外的限制
   # 由上一則的主機端位址負責，不是這個。
-  VARS=(CM_HOSTNAME=amr01)
   resolve compose.yaml compose.bridge.yaml
 
   [ "$(ask '(s["backend"]["command"][s["backend"]["command"].index("--host") + 1], s["frontend"]["command"][s["frontend"]["command"].index("--bind") + 1])')" \
     = "('0.0.0.0', '0.0.0.0')" ]
 }
 
-@test "bridge 而沒給 CM_HOSTNAME 時解析失敗，訊息指名這個變數並附下一步" {
-  resolve compose.yaml compose.bridge.yaml
+# ── 主機名稱不再由環境變數決定（#385）────────────────────────────────────────
+# 新納管的預設主機名稱改由介面確認後存在清單檔；容器裡的舊 CM_HOSTNAME 會讓 entrypoint 停止啟動，
+# 所以三種組合都不能再把它帶進去——主機上有沒有設定都一樣。
 
-  [ "${status}" -ne 0 ]
-  [[ "${output}" == *"CM_HOSTNAME"* ]]
-  [[ "${output}" == *"下一步："* ]]
+@test "三種組合都不把 CM_HOSTNAME 帶進容器，主機有設定也一樣（#385）" {
+  local combo
+  for combo in "compose.yaml" "compose.yaml compose.dev.yaml" "compose.yaml compose.bridge.yaml"; do
+    VARS=(CM_HOSTNAME=amr01)
+    # shellcheck disable=SC2086 # 刻意拆成多個檔名
+    resolve ${combo}
+    [ "${status}" -eq 0 ]
+    [ "$(ask 'any("CM_HOSTNAME" in (v.get("environment") or {}) for v in s.values())')" = "False" ]
+  done
 }
 
-@test "bridge 下 CM_HOSTNAME 給的是空字串也一樣擋下" {
-  VARS=(CM_HOSTNAME=)
-  resolve compose.yaml compose.bridge.yaml
-
-  [ "${status}" -ne 0 ]
-  [[ "${output}" == *"CM_HOSTNAME"* ]]
-}
-
-@test "bridge 下給的 CM_HOSTNAME 原樣帶進後端" {
-  VARS=(CM_HOSTNAME=amr01)
+@test "疊上 bridge 檔不再要求 CM_HOSTNAME（#385）" {
   resolve compose.yaml compose.bridge.yaml
 
   [ "${status}" -eq 0 ]
-  [ "$(ask 's["backend"]["environment"]["CM_HOSTNAME"]')" = "amr01" ]
 }
 
-@test "預設（host）不要求 CM_HOSTNAME" {
-  # host 網路下 gethostname() 就是主機名、而且穩定，所以那裡不強制；強制只跟著 bridge 檔來。
-  resolve compose.yaml
-
-  [ "${status}" -eq 0 ]
+@test "執行期目錄 /run/config_manager 不在任何掛載裡（#385）" {
+  # 候選只對一次啟動有效：不是資料卷、不是 bind mount，也不是 tmpfs——它在容器自己的可寫層。
+  local combo
+  for combo in "compose.yaml" "compose.yaml compose.dev.yaml" "compose.yaml compose.bridge.yaml"; do
+    # shellcheck disable=SC2086 # 刻意拆成多個檔名
+    resolve ${combo}
+    [ "${status}" -eq 0 ]
+    [ "$(ask 'any(str(m.get("target", "")).startswith("/run/config_manager") or str(m).find("/run/config_manager") >= 0 for v in s.values() for m in (v.get("volumes") or []) + [{"target": t} for t in (v.get("tmpfs") or [])])')" = "False" ]
+  done
 }
 
 # ── 不提供開放區網的開關（定案 3）────────────────────────────────────────────
@@ -211,7 +209,6 @@ local_only='all(
   for v in s.values())'
 
 @test "四種組合裡沒有任何一種把服務綁到本機以外的位址" {
-  VARS=(CM_HOSTNAME=amr01)
   local combination
   for combination in "compose.yaml" "compose.yaml compose.dev.yaml" \
                      "compose.yaml compose.bridge.yaml" "compose.yaml compose.dev.yaml compose.bridge.yaml"; do
@@ -238,7 +235,6 @@ local_only='all(
   # 才被強制終止（結束碼 137）。Python 預設會接的是 SIGINT，所以把停止訊號換成它：實測立即
   # 結束、結束碼 0。真的停得掉那一半在 script/compose_smoke.sh 量。
   local combination
-  VARS=(CM_HOSTNAME=amr01)
   for combination in "compose.yaml" "compose.yaml compose.dev.yaml" "compose.yaml compose.bridge.yaml"; do
     # shellcheck disable=SC2086  # 要的就是拆成多個檔名
     resolve ${combination}
