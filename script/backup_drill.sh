@@ -203,6 +203,9 @@ seed() {
     "${API}/api/session" >/dev/null
   take_editing
   call POST /api/allowed-roots "{\"prefix\":\"${CM_TARGET_ROOT}/extra\"}" >/dev/null
+  # 新納管預設主機名稱（#385）：納管要它。演練直接用 docker compose 起服務、不經啟動工具，沒有
+  # 候選——由開發者直接輸入一個，與介面上的做法相同。它存在清單檔裡，所以也跟著備份與還原。
+  call PUT /api/host-name '{"hostname":"drill-host"}' >/dev/null
   KEEP="$(onboard keep.yaml)"
   LOST="$(onboard lost.yaml)"
   DRIFT="$(onboard drift.yaml)"
