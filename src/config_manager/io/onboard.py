@@ -223,7 +223,8 @@ def onboard(repo: str, request: OnboardRequest, author: str) -> FileEntry:
     hostname = current.defaults.hostname
     if hostname is None:
         raise DefaultHostnameMissing(
-            "還沒保存新納管預設主機名稱，所以不能納管新 config；這次什麼都沒寫。"
+            f"{os.path.join(repo, CONFIG_LIST_NAME)} 的 [defaults] hostname 還沒保存"
+            "（新納管預設主機名稱），所以不能納管新 config；這次什麼都沒寫。"
             "名字只來自明確保存的設定，不從環境變數或容器讀。"
             "下一步：到「設定」的「新納管預設主機名稱」確認或輸入這台機器的名稱，再納管"
         )
