@@ -1856,8 +1856,8 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/{build,run,exec,stop,prune}.sh` | 無——見「刻意的空格」 | 已落地 |
 | `script/hooks/dispatch.sh` | 無——見「刻意的空格」 | 已落地 |
 | `script/hooks/{pre,post}/*.sh` | 無——見「刻意的空格」（`pre/run.sh`、`post/run.sh` 除外，見下兩列） | 已落地 |
-| `script/hooks/pre/run.sh` | T19（#385：主機端的舊變數殘留偵測；目標根目錄的檢查一併） | #385 進行中 |
-| `script/hooks/post/run.sh` | T19（#385：在主機上讀主機名稱、交給寫檔程式；候選檔本身在 T27） | #385 進行中 |
+| `script/hooks/pre/run.sh` | T19（#385：主機端的舊變數殘留偵測；目標根目錄的檢查一併） | 已落地 |
+| `script/hooks/post/run.sh` | T19（#385：在主機上讀主機名稱、交給寫檔程式；候選檔本身在 T27） | 已落地 |
 | `script/local/cfg/cfg.sh` | 無——見「刻意的空格」 | 已落地 |
 
 這張表涵蓋 `src/` 底下的每個 `.py` 與 `script/` 底下的每支 `.sh`。**新增一個模組或
