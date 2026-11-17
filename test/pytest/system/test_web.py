@@ -3201,6 +3201,22 @@ def test_saving_another_field_leaves_a_multiline_value_without_a_type_as_it_was(
     assert targets["p"].read_text(encoding="utf-8") == expected
 
 
+def test_saving_another_field_leaves_a_mixed_list_without_line_breaks_as_it_was(open_page, repo):
+    # #383：與換行無關的同一個問題——混型清單 `[1, two]` 的元素是型別未知，控制項裡只有文字；
+    # 沒動過的值要送回原本的值，數字 1 不能因為存了別的欄位就變成字串。
+    original = "mixed:\n  - 1\n  - two\ncount: 3\n"
+    targets = _listing_many(repo, {"p": original})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("count"), "4")
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    assert targets["p"].read_text(encoding="utf-8") == original.replace("count: 3", "count: 4")
+
+
 def test_changing_one_line_of_a_multiline_value_without_a_type_keeps_the_other_line_breaks(
     open_page, repo
 ):
