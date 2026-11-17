@@ -415,6 +415,30 @@ def test_import_a_source_outside_the_whitelist_is_refused(api, tmp_path):
     assert "白名單之外" in _detail(exc.value)  # 被拒的原因是白名單，不是別種 422
 
 
+@pytest.mark.parametrize("where", ["browse", "inspect", "onboard"])
+def test_a_plain_dotdot_path_out_of_the_whitelist_is_refused(api, sources_root, where):
+    # v0.2.0 檢查點 4「以 ../ 嘗試逃逸白名單被攔截」的納管／瀏覽路徑那一半（#353）：路徑字面上
+    # 從白名單根出發、用 `..` 走出去。其餘系統規格裡的 `..` 都夾在連結迴圈裡（F18）；單純的
+    # `../` 只在核心層（T4）驗過。檔案真的存在，被拒的原因才會是白名單，不是找不到。
+    if os.environ.get("CM_SYSTEM_BASE_URL"):
+        pytest.skip("需在白名單根的上一層建檔")
+    outside = pathlib.Path(sources_root).parent / f"dotdot_escape_{where}.yaml"
+    outside.write_bytes(b"secret: 1\n")
+    path = f"{sources_root}/../{outside.name}"
+    _set_session(api)
+    calls = {
+        "browse": lambda: _get(api, f"/api/browse?{urllib.parse.urlencode({'path': path})}"),
+        "inspect": lambda: _post(api, "/api/inspect", {"source_path": path, "format": "yaml"}),
+        "onboard": lambda: _post(api, "/api/configs", {"source_path": path, "format": "yaml"}),
+    }
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        calls[where]()
+
+    detail = json.dumps(_detail(exc.value), ensure_ascii=False)
+    assert (exc.value.code, "白名單之外" in detail) == (_UNPROCESSABLE, True)
+
+
 def test_import_with_an_unknown_format_is_refused_as_a_bad_value(api, sources_root):
     # format 不是允許值是「送錯值」（422），不是「與既有狀態衝突」（409）——InvalidFormat
     # 雖屬 ConfigListError，端點特別先接它映 422（#175 的資安審查）。
@@ -3377,31 +3401,46 @@ def test_revert_writes_the_old_content_back_as_a_new_record_without_rewriting_hi
     assert [c["kind"] for c in _history(api, entry["uid"])] == ["revert", "cfg", "cfg"]
 
 
-def _changed_three_times_then_reverted_to_the_first(api, sources_root, name):
-    """納管（第一版）後連續改三次，再退回第一版。回條目。"""
+_EVERY_KIND = "import,cfg,revert,adopt,meta,unmanage"
+
+
+def _changed_three_times_then_reverted(api, sources_root, name, back_to):
+    """納管 `count: 1` 後連續改成 2、3、4，再退回 `back_to` 那一版：`"onboarded"` 是納管那一筆，
+    `"first change"` 是第一次修改那一筆（cfg 裡最舊的）。回條目。"""
     _clear_drafts(api)
     entry = _onboard(api, sources_root, name, b"count: 1\n")
     for value in (2, 3, 4):
         _promote_value(api, entry["uid"], "count", value)
-    first = _history(api, entry["uid"], "import")[0]["sha"]
-    _post(api, f"/api/configs/{entry['uid']}/revert", {"version": first})
+    kind = {"onboarded": "import", "first change": "cfg"}[back_to]
+    version = _history(api, entry["uid"], kind)[-1]["sha"]
+    _post(api, f"/api/configs/{entry['uid']}/revert", {"version": version})
     return entry
 
 
-def test_after_three_changes_and_a_revert_every_earlier_record_is_still_listed(api, sources_root):
-    # v0.4.0 檢查點 1「連續修改三次後可退回第一版；退版後歷史仍可見全部四筆紀錄，歷史未被截斷」
-    # （#353）：四筆＝納管（第一版）＋三次修改，退版後一筆都不少，另多一筆退版。上面那一則只改兩次。
-    entry = _changed_three_times_then_reverted_to_the_first(api, sources_root, "revert_three.yaml")
+@pytest.mark.parametrize(
+    ("back_to", "content"), [("onboarded", b"count: 1\n"), ("first change", b"count: 2\n")]
+)
+def test_after_three_changes_a_revert_restores_that_version_and_keeps_every_earlier_record(
+    api, sources_root, back_to, content
+):
+    # v0.4.0 檢查點 1「連續修改同一 config 三次後可退回第一版；退版後歷史仍可見全部四筆紀錄，
+    # 歷史未被截斷；目標內容確實回到第一版」（#353）。「第一版」原文沒有定義：納管那一版與第一次
+    # 修改那一版（U26「選第一次修改的版本」）各驗一次，不互相代替。四筆＝納管＋三次修改，退版後
+    # 一筆都不少，另多一筆退版。上面那一則只改兩次。
+    name = f"revert_three_{back_to.replace(' ', '_')}.yaml"
+    entry = _changed_three_times_then_reverted(api, sources_root, name, back_to)
 
-    everything = _history(api, entry["uid"], "import,cfg,revert,adopt,meta,unmanage")
+    kinds = [c["kind"] for c in _history(api, entry["uid"], _EVERY_KIND)]
+    written = pathlib.Path(entry["target"]).read_bytes()
 
-    assert [c["kind"] for c in everything] == ["revert", "cfg", "cfg", "cfg", "import"]
+    assert (kinds, written) == (["revert", "cfg", "cfg", "cfg", "import"], content)
 
 
 def test_filtering_the_history_by_the_cfg_kind_leaves_the_revert_out(api, sources_root):
-    # v0.4.0 檢查點 1「以 cfg 類型過濾時退版紀錄不出現」（#353）：`?prefix=cfg` 只列 cfg。頁面的
-    # 「只看內容變更」刻意把退版也列進來（F11，10/31 定案 E1），那是另一個篩選，不是這一條。
-    entry = _changed_three_times_then_reverted_to_the_first(api, sources_root, "revert_filter.yaml")
+    # v0.4.0 檢查點 1「以 cfg 類型過濾時退版紀錄不出現」（#353）：歷史的 cfg 類型篩選
+    # （`?prefix=cfg`，T7 那一列）只列 cfg。頁面的「只看內容變更」是另一個篩選，依 10/31 定案 E1
+    # 會列出退版，不在這一條裡。
+    entry = _changed_three_times_then_reverted(api, sources_root, "revert_filter.yaml", "onboarded")
 
     kinds = [c["kind"] for c in _history(api, entry["uid"], "cfg")]
 

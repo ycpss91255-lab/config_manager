@@ -335,13 +335,17 @@ def open_page(browser, site, api, web_coverage):
         cdp.send("Profiler.startPreciseCoverage", {"callCount": True, "detailed": True})
 
         url = f"{site}/index.html"
-        opened.append((cdp, url))
+        opened.append((page, cdp, url))
         page.goto(url)
         return page
 
     yield _open
 
-    for cdp, url in opened:
+    for page, cdp, url in opened:
+        if page.is_closed():
+            # 規格自己真的關掉的分頁（v0.6.0 檢查點 2 的「持有者關閉分頁」，#353）：CDP 跟著分頁
+            # 一起沒了，讀不到它的覆蓋率；它跑過的行由同一則規格的其他頁面與其餘規格補上。
+            continue
         web_coverage.absorb(cdp, url)
     for context in contexts:
         context.close()
@@ -2813,6 +2817,23 @@ def test_adding_a_prefix_with_dotdot_is_rejected_with_the_reason_shown(open_page
     page.wait_for_selector("[data-testid='whitelist-error']", state="visible")
 
 
+def test_a_prefix_with_dotdot_is_not_added_to_the_whitelist(open_page, tmp_path):
+    # v0.2.0 檢查點 4 的加入白名單前綴那一半（#353）：上一則只等錯誤出現；TEST-PLAN 那一列另要求
+    # 「不靜默加入」——寫的那串與正規化之後的那串，清單裡都沒有。
+    page = _open_whitelist_as_developer(open_page())
+    typed = str(tmp_path / "sub" / ".." / "escape")
+
+    page.fill("[data-testid='whitelist-add-input']", typed)
+    page.get_by_role("button", name="加入白名單").click()
+    page.wait_for_selector("[data-testid='whitelist-error']", state="visible")
+
+    listed = [
+        page.query_selector(f"[data-testid='whitelist-root-{prefix}']")
+        for prefix in (typed, str(tmp_path / "escape"))
+    ]
+    assert listed == [None, None]
+
+
 def test_removing_a_root_asks_for_confirmation_then_removes(open_page, browse_root):
     # AC3：移除前先要求確認（不靜默移除），確認後才真移除。
     page = _open_whitelist_as_developer(open_page())
@@ -2969,6 +2990,34 @@ def test_nested_parameters_render_as_a_collapsible_block_not_a_dotted_name(open_
     assert leaf == "inner"
     page.click("[data-testid='param-outer']")
     page.wait_for_selector("[data-testid='param-outer.inner']", state="hidden")
+
+
+def test_a_nested_parameter_is_drawn_indented_under_its_parent(open_page, repo):
+    # v0.8.0 檢查點 2「縮排由系統產生」的畫面那一半（#353）：TEST-PLAN 那一列寫「子列縮排」。
+    # 量的是畫出來的位置——子列的名稱比父列的名稱更靠右；`data-depth` 只說深度的資料對，不證明
+    # 畫面真的有縮排。寫出檔的縮排由下一則驗。
+    _listing_with(repo, "outer:\n  inner: 1\n")
+    page = _open_panel(open_page())
+
+    parent = page.locator("[data-testid='param-outer'] .param-name").first.bounding_box()
+    child = page.locator("[data-testid='param-outer.inner'] .param-name").first.bounding_box()
+
+    assert child["x"] > parent["x"]
+
+
+def test_editing_a_nested_parameter_writes_the_file_with_the_systems_indentation(open_page, repo):
+    # v0.8.0 檢查點 2「縮排由系統產生」的寫出檔那一半（#353）：使用者只改值、不碰縮排，寫出的
+    # 巢狀物件照原本的兩格縮排，沒改的兄弟欄位逐位元組不變。清單的寫出由清單那幾則驗。
+    targets = _listing_many(repo, {"p": "outer:\n  inner: 1\n  keep: 2\n"})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("outer.inner"), "5")
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    assert targets["p"].read_text(encoding="utf-8") == "outer:\n  inner: 5\n  keep: 2\n"
 
 
 def test_a_bool_parameter_is_a_checkbox_reflecting_its_value(open_page, repo):
@@ -3454,6 +3503,38 @@ def test_an_element_added_to_an_empty_list_is_edited_as_text_and_marked_unstruct
 
     control = page.get_attribute(_param_value("tags[0]"), "type")
     assert ("未結構化" in page.inner_text(badge), control) == (True, "text")
+
+
+@pytest.mark.parametrize(
+    ("content", "path"),
+    [("mixed:\n  - 1\n  - two\ncount: 3\n", "mixed[1]"), ("when: 2026-11-17\ncount: 3\n", "when")],
+    ids=["mixed-list-element", "date"],
+)
+def test_other_values_without_a_type_are_edited_as_text_and_marked_unstructured(
+    open_page, repo, content, path
+):
+    # v0.8.0 檢查點 3 的「型別未知」要涵蓋 T12 列出的種類（#353）：上兩則是 null 與空清單的元素；
+    # T12 另把型別混雜的清單元素標成未知，骨架那一列另列日期。兩種也退回文字並標未結構化。
+    _listing_many(repo, {"p": content})
+    page = _open_panel(open_page())
+
+    badge = f"{_row(path)} [data-testid='param-unstructured']"
+    page.wait_for_selector(badge)
+
+    control = page.get_attribute(_param_value(path), "type")
+    assert ("未結構化" in page.inner_text(badge), control) == (True, "text")
+
+
+def test_a_multiline_value_without_a_type_keeps_its_line_breaks_when_edited(open_page, repo):
+    # v0.8.0 檢查點 3「退回文字區塊」的多行內容（#353）：原文沒有強制 textarea（附錄 C.2 只說
+    # textarea 已足夠），但退回的文字區塊要能操作多行內容——型別未知的值裡有換行時，改過之後
+    # 換行還在，不被單行輸入框吃掉。
+    _listing_many(repo, {"p": "notes:\n  - 1\n  - |\n    line one\n    line two\ncount: 3\n"})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("notes[1]"), "line one\nline three\n")
+
+    assert page.input_value(_param_value("notes[1]")) == "line one\nline three\n"
 
 
 def test_list_controls_are_absent_while_read_only(open_page, repo):
@@ -4834,10 +4915,12 @@ def _select_first_version(page):
     page.wait_for_selector("[data-testid='history-revert']")
 
 
-def test_reverting_from_history_puts_the_target_back_to_the_first_version(
+def test_reverting_from_history_puts_the_target_back_to_the_onboarded_version(
     open_page, browse_root, api
 ):
     # AC2／AC3：連續修改三次後可退回第一版，目標內容確實回到第一版；歷史多一筆「退回舊版本」。
+    # 這一則退回的是納管那一版（「全部」裡最舊的一筆）；第一次修改那一版由下一則驗（#353 改名，
+    # 兩種「第一版」分開命名、不互相代替）。
     versions = ["count: 1\n", "count: 2\n", "count: 3\n", "count: 4\n"]
     entry = _history_via_api(api, browse_root, versions)
     page = _open_history(open_page(identity=_REMEMBERED), entry["uid"])
@@ -4852,6 +4935,31 @@ def test_reverting_from_history_puts_the_target_back_to_the_first_version(
     page.click("[data-testid='history-filter'] button[data-filter='all']")
     page.wait_for_selector("text=退回舊版本")
     assert "退回到版本" in page.inner_text("[data-testid='history-list']")
+
+
+def test_reverting_from_history_puts_the_target_back_to_the_first_change(
+    open_page, browse_root, api
+):
+    # v0.4.0 檢查點 1 的另一種「第一版」：U26「選第一次修改的版本退版」（#353）。預設的「只看內容
+    # 變更」裡最舊的一筆就是第一次修改；退回後目標是那一次改完的樣子，三次修改都還在。
+    versions = ["count: 1\n", "count: 2\n", "count: 3\n", "count: 4\n"]
+    entry = _history_via_api(api, browse_root, versions)
+    page = _open_history(open_page(identity=_REMEMBERED), entry["uid"])
+    oldest = page.eval_on_selector_all(
+        "[data-testid^='history-entry-']", "els => els[els.length - 1].dataset.testid"
+    )
+    page.click(f"[data-testid='{oldest}']")
+    page.wait_for_selector("[data-testid='history-revert']")
+
+    page.click("[data-testid='history-revert']")
+    page.wait_for_selector("[data-testid='confirm-dialog'][open]")
+    page.click("[data-testid='confirm-ok']")
+    page.wait_for_selector("[data-testid='history-notice']:not([hidden])")
+    page.wait_for_selector("[data-testid^='history-entry-']:has-text('退回舊版本')")  # 列表已重讀
+
+    changes = page.locator("[data-testid^='history-entry-']:has-text('修改參數')").count()
+    written = pathlib.Path(entry["target"]).read_text(encoding="utf-8")
+    assert (written, changes) == ("count: 2\n", 3)
 
 
 def test_cancelling_the_revert_confirmation_changes_nothing(open_page, browse_root, api):
@@ -5375,6 +5483,29 @@ def test_editing_a_target_behind_the_interface_shows_the_right_diff(open_page, r
     assert page.inner_text(target_value) == "4"
 
 
+def test_editing_a_target_with_vim_shows_the_right_diff(open_page, repo):
+    # v0.5.0 檢查點 1 原文寫「以 vim 直接修改」（#353）：用真的 vim（測試映像裡的 vim.tiny，不讀
+    # 任何設定檔）在介面外改目標檔，不以直接寫檔代替；改完按「檢查差異」→ 偏離，目標側是 4。
+    targets = _listing_many(repo, {"a": "count: 3\n"})
+    page = _open_panel(open_page())
+    assert page.query_selector("[data-testid='drift-banner']") is None
+
+    subprocess.run(
+        ["vim.tiny", "-u", "NONE", "-e", "-s", "-c", "%s/count: 3/count: 4/", "-c", "wq",
+         str(targets["a"])],
+        stdin=subprocess.DEVNULL, check=True, timeout=30,
+    )
+    page.get_by_role("button", name="檢查差異").click()
+
+    page.wait_for_selector(f"[data-testid='tree-item-{_PARAM_UID}'] [data-state='drift']")
+    page.dblclick(f"[data-testid='tree-item-{_PARAM_UID}']")
+    page.wait_for_selector("[data-testid='panel-diff']")
+    page.click("[data-testid='panel-diff']")
+    page.wait_for_selector("[data-testid='diff-row-count']")
+    target_value = "[data-testid='diff-row-count'] [data-testid='diff-target-value']"
+    assert page.inner_text(target_value) == "4"
+
+
 def test_group_nodes_roll_up_the_most_severe_state_of_their_children(open_page, listing):
     # AC6：父節點彙總子節點最嚴重的狀態（偏離 > 未部署 > 一致）：navigation 只有 a（一致）→ 一致；
     # 未分群有 b（偏離）與 c（未部署）→ 偏離。
@@ -5503,6 +5634,28 @@ def test_when_the_holder_leaves_the_next_person_can_edit(open_page, listing):
     second.wait_for_selector("[data-testid='promote-all']", state="visible")
     assert second.is_hidden("[data-testid='readonly-banner']")
     assert second.inner_text("[data-testid='current-role']").startswith("林巡檢")
+
+
+def test_when_the_holder_closes_the_tab_the_next_person_can_edit(open_page, listing):
+    # v0.6.0 檢查點 2「持有者關閉分頁後第二個分頁可取得編輯權」（#353）：上一則是對持有者頁面送出
+    # pagehide 事件，頁面其實沒有關。這一則真的關掉持有者的分頁，看另一個分頁重新整理後能不能取得。
+    listing("a")
+    holder = _enter_identity(open_page())
+    holder.wait_for_selector("[data-testid='promote-all']", state="visible")
+    second = open_page()
+    second.wait_for_selector("[data-testid='identity-form']", state="visible")
+    _fill_identity(second, "林巡檢")
+    second.wait_for_selector("[data-testid='readonly-banner']", state="visible")
+
+    holder.close()
+    second.wait_for_timeout(300)
+    second.reload()
+    second.wait_for_selector("[data-testid='identity-form']", state="visible")
+    _fill_identity(second, "林巡檢")
+    second.wait_for_selector("[data-testid='config-tree']", state="visible")
+
+    second.wait_for_selector("[data-testid='promote-all']", state="visible")
+    assert second.is_hidden("[data-testid='readonly-banner']")
 
 
 # ── W2 解除納管的介面入口（#287）────────────────────────────────────────────
@@ -7006,6 +7159,24 @@ def test_searching_a_parameter_name_lists_every_config_that_has_it(open_page, re
 
     item = "[data-testid='tree-item-{}']"
     assert [page.is_visible(item.format(uid)) for uid in ("mfz3k9q1", "mfz3k9q2")] == [True, True]
+
+
+def test_expanding_a_search_hit_brings_the_matching_row_into_view(open_page, repo):
+    # v0.6.0 檢查點 1「在展開時定位到該列」（#353）：只有標示不夠，那一列要真的進入可見範圍。
+    # 一份 80 個參數、max_vel 在最後的長 config，展開時它遠在第一屏之外。
+    long_one = "".join(f"p{index:02d}: {index}\n" for index in range(80)) + "max_vel: 0.8\n"
+    _listing_many(repo, {"long": long_one, "other": "count: 1\n"})
+    page = _enter_identity(open_page())
+
+    page.fill("[data-testid='search-input']", "max_vel")
+    page.wait_for_selector("[data-testid='tree-item-mfz3k9q2']", state="detached")
+    page.dblclick("[data-testid='tree-item-mfz3k9q1']")
+    page.wait_for_selector("[data-testid='param-max_vel'][data-hit='true']")
+    page.wait_for_timeout(500)  # 捲動是平滑的：讓它停下來再量
+
+    box = page.locator("[data-testid='param-max_vel']").bounding_box()
+    height = page.viewport_size["height"]
+    assert 0 <= box["y"] and box["y"] + box["height"] <= height
 
 
 def test_searching_a_value_finds_the_parameter_holding_it(open_page, repo):

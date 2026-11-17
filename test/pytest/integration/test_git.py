@@ -126,6 +126,20 @@ def test_history_filtered_by_kind_leaves_the_others_out(tmp_path):
     assert [entry.kind for entry in history(str(repo), "mfz3k9q1", "cfg")] == ["cfg"]
 
 
+def test_history_filtered_by_cfg_leaves_a_revert_out(tmp_path):
+    # T7「以 cfg 過濾時，revert 與 meta 紀錄不出現」的 revert 那一半（v0.4.0 檢查點 1，#353）：
+    # 上一則只放了 meta。
+    repo = _repo(tmp_path)
+    (repo / "nav2.yaml").write_text("max_vel: 0.8\n")
+    stage(str(repo), "nav2.yaml")
+    record(str(repo), "mfz3k9q1", "cfg", "設為 0.8", AUTHOR)
+    (repo / "nav2.yaml").write_text("max_vel: 1.2\n")
+    stage(str(repo), "nav2.yaml")
+    record(str(repo), "mfz3k9q1", "revert", "rollback to 1234567", AUTHOR)
+
+    assert [entry.kind for entry in history(str(repo), "mfz3k9q1", "cfg")] == ["cfg"]
+
+
 def _two_versions(tmp_path):
     """一個 uid 的兩筆變更：先設 0.8，再設 1.2。回傳 repo 與第一筆的 sha。"""
     repo = _repo(tmp_path)
