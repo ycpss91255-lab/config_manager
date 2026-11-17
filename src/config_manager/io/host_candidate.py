@@ -93,7 +93,11 @@ def read_candidate(runtime_dir: str, start_id: str) -> Candidate | Unconfirmed:
             f"候選檔 {path} 讀不出來（{error.strerror}）。"
             "下一步：重跑啟動工具，或由開發者直接輸入"
         )
-    record = _parse(raw)
+    return _judge(_parse(raw), start_id)
+
+
+def _judge(record: dict[str, str] | str, start_id: str) -> Candidate | Unconfirmed:
+    """候選檔的內容屬不屬於 `start_id` 這次啟動、是不是一個可用的名稱。"""
     if isinstance(record, str):
         return Unconfirmed(f"候選內容不合法：{record}。下一步：重跑啟動工具，或由開發者直接輸入")
     if record.get("start_id") != start_id:

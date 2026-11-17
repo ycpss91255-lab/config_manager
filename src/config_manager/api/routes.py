@@ -11,7 +11,6 @@ app 由 create_app(repo) 產生而非模組層的全域物件：config-repo 的�
 import os
 import sys
 from collections.abc import Iterable
-from collections.abc import Callable
 from datetime import datetime, UTC
 from subprocess import CalledProcessError
 from typing import cast
@@ -171,7 +170,6 @@ def create_app(
     repo: str,
     allowed_origins: Iterable[str] = DEFAULT_ORIGINS,
     timeouts: Timeouts | None = None,
-    clock: Callable[[], datetime] = utc_now,
     mode: str = DEPLOYMENT,
     runtime_dir: str = DEFAULT_RUNTIME_DIR,
 ) -> FastAPI:
@@ -215,9 +213,10 @@ def create_app(
     # 目前編輯階段裡的草稿（#18 的 D1：掛在 app 上、單一階段；階段生命週期是 #33）。app 級、
     # 重新整理頁面不丟。
     stage_box: dict[str, Stage] = {"stage": Stage()}
-    # 單一編輯階段（#33、ADR-00000014）：續期逾時兩種模式都有，異常中斷的分頁才收得回來；時鐘
-    # 可注入（T13）。
-    lock_box = LockBox(SessionLock(timeouts.renew), clock)
+    # 單一編輯階段（#33、ADR-00000014）：續期逾時兩種模式都有，異常中斷的分頁才收得回來。時鐘的
+    # 注入點在 LockBox 本身；create_app 原本那個 clock 參數沒有任何呼叫端，#385 拿掉它來放
+    # runtime_dir（參數上限 5 個）。
+    lock_box = LockBox(SessionLock(timeouts.renew), utc_now)
     # 各瀏覽器宣告的身分（#288：身分屬於各自的瀏覽器，不是一份全域）。放在 app 上而不是一個模組層
     # 的全域——後者會讓同一個行程裡起兩個 app 互相看見對方的身分。部署模式下閒置逾時會退出並
     # 釋放它持有的階段（#48）。
