@@ -2299,8 +2299,10 @@ function valueControl(row) {
       break;
     default:
       // 型別未知（null、空陣列的元素…）：退回文字編輯，列上明確標示「未結構化編輯」——使用者看得到
-      // 自己失去了型別保護（§7.5.4、#46）；這類項目應優先補 schema。
-      control = element("input", { type: "text", value: displayValue(row.baseline, row.type) });
+      // 自己失去了型別保護（§7.5.4、#46）；這類項目應優先補 schema。控制項與字串同一個：值含換行時
+      // 是 textarea，否則單行輸入框——單行輸入框保不住換行，改過之後換行會變成空格（#383，F15 同一個
+      // 問題在字串上修過；附錄 C.2：退回文字區塊時 textarea 已足夠）。
+      control = stringControl(displayValue(row.baseline, row.type));
   }
   control.setAttribute("data-testid", "param-value");
   return control;
@@ -2562,6 +2564,12 @@ function currentValue(control, row) {
   if (control.choices) return control.choices[control.selectedIndex];
   if (row.type === "bool") return control.checked;
   if (row.type === "int" || row.type === "float") return Number(control.value);
+  // 型別未知（#383）：控制項裡只有文字。文字沒被改過就送回原本的值——否則混型清單的數字 1 一經過
+  // 控制項就變成 "1"，清單被判定改過，存別的欄位時整份重寫。改過的照字面存成文字（未結構化編輯）。
+  if ((row.type === "unknown" || row.type === "null")
+      && control.value === displayValue(row.baseline, row.type)) {
+    return row.baseline;
+  }
   return control.value;
 }
 

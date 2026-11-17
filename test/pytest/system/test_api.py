@@ -2972,6 +2972,25 @@ def test_history_defaults_to_content_changes_only_newest_first(api, sources_root
     assert changes[0]["summary"].startswith("修改參數")
 
 
+def test_a_multiline_string_where_the_type_is_unknown_reads_back_the_same_after_promotion(
+    api, sources_root
+):
+    # #383 的後端與寫出：型別未知的位置（型別混雜清單的元素）收到含換行的字串，進版後讀回
+    # 一個換行都不少。被改那個值在檔案裡怎麼寫由函式庫決定（T6），這裡只比讀回的值。
+    _clear_drafts(api)
+    entry = _onboard(
+        api, sources_root, "unknown_multiline.yaml",
+        b"notes:\n  - 1\n  - |\n    line one\n    line two\ncount: 3\n",
+    )
+    edits = {"notes[1]": "line one\nline three\n"}
+    _post(api, "/api/drafts", {"uid": entry["uid"], "edits": edits})
+    _post(api, "/api/promote", {})
+
+    read_back = _get(api, f"/api/configs/{entry['uid']}")["values"]["notes"]
+
+    assert read_back == [1, "line one\nline three\n"]
+
+
 def test_history_prefix_picks_the_kinds_to_show(api, sources_root):
     # ?prefix=import,cfg 把納管那筆也列出來（「全部」就是六種都給）。
     _clear_drafts(api)
