@@ -31,11 +31,13 @@ ONBOARD = "在白名單內納管"
 SPECIFY_TYPES = "修改參數型別"
 MAINTAIN_ROOTS = "維護白名單"
 EDIT_ATTRIBUTES = "編輯 config 屬性"
+MAINTAIN_HOST_NAME = "確認或修改新納管預設主機名稱"
 
 # 每個人都能做的，與僅開發者能做的（CONTEXT.md「角色與環境」：型別指定、白名單、屬性編輯
 # 限開發者）。兩個集合窮舉了所有動作；不在任何一邊的動作是程式寫錯了代號，見 `permits`。
 _EVERYONE = frozenset({EDIT_VALUES, REVERT, HANDLE_DRIFT, ONBOARD})
-_DEVELOPER_ONLY = frozenset({SPECIFY_TYPES, MAINTAIN_ROOTS, EDIT_ATTRIBUTES})
+# 新納管預設主機名稱（#385）：改的是之後每一筆納管的身分預設，比照白名單限開發者（維護者 11/17）。
+_DEVELOPER_ONLY = frozenset({SPECIFY_TYPES, MAINTAIN_ROOTS, EDIT_ATTRIBUTES, MAINTAIN_HOST_NAME})
 ACTIONS = tuple(sorted(_EVERYONE | _DEVELOPER_ONLY))
 
 

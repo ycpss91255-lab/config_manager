@@ -9,6 +9,7 @@ app 由 create_app(repo) 產生而非模組層的全域物件：config-repo 的�
 """
 
 import os
+import sys
 from collections.abc import Iterable
 from collections.abc import Callable
 from datetime import datetime, UTC
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from config_manager.api.attributes import register_attributes
+from config_manager.api.host_name import register_host_name
 from config_manager.api.checks import checks_for
 from config_manager.api.drafts import register_drafts
 from config_manager.api.drift import register_drift
@@ -85,7 +87,7 @@ from config_manager.io.errors import (
     CandidateUnreadable,
     ChangeError,
     ContentUnreadable,
-    HostnameInvalid,
+    DefaultHostnameMissing,
     OnboardLeftBehind,
     PreflightError,
     SchemaUnreadable,
@@ -99,7 +101,9 @@ from config_manager.io.parsers import read_source as read_source_copy
 from config_manager.io.digest import read_target
 from config_manager.io.preflight import read_config_list
 from config_manager.io.scan import ScanFailure, scan
-from config_manager.io.source import Source, local_hostname, read_source
+from config_manager.io.host_candidate import DEFAULT_RUNTIME_DIR, new_start_id, publish_start_id
+from config_manager.io.repo import load_list
+from config_manager.io.source import Source, read_source
 from config_manager.io.unmanage import unmanage
 
 
@@ -169,6 +173,7 @@ def create_app(
     timeouts: Timeouts | None = None,
     clock: Callable[[], datetime] = utc_now,
     mode: str = DEPLOYMENT,
+    runtime_dir: str = DEFAULT_RUNTIME_DIR,
 ) -> FastAPI:
     """建立服務於 repo 這份 config-repo 的 app。
 
@@ -179,6 +184,10 @@ def create_app(
     `mode` 是開發／部署模式（#47）：由起服務的那一層判定（`api/cli` 讀 `CM_MODE`）、在這裡定住、
     以 `GET /api/mode` 回報給前端。沒有改它的端點——前端改不了，所以前端的改動繞不過它。
     不認得的值在這裡再擋一次：`create_app` 也會被測試直接呼叫，不只從 `serve_plan` 來。
+
+    `runtime_dir` 是執行期目錄（#385）：每建一個 app 就是服務的一次啟動，產生一個新的啟動識別碼、
+    留在這裡（記憶體），並發布一份到那個目錄給啟動工具的寫檔程式讀；主機名稱候選只認這次的識別碼
+    （`io/host_candidate`）。發布失敗不擋啟動——候選的任何問題都不擋，畫面會顯示尚未確認。
 
     `timeouts` 是兩種逾時（沒給就用預設）：續期逾時兩種模式都有；**閒置逾時只在部署模式生效**
     （#48）——開發模式不因閒置退出，給了也不用。
@@ -271,9 +280,10 @@ def create_app(
     @app.post("/api/inspect")
     def inspect_source(payload: InspectInput) -> dict[str, object]:
         """偵測候選檔案（§3.5.3 追加，#195）。供納管確認畫面顯示偵測結果。"""
-        return _inspect(root_prefixes(repo), payload)
+        return _inspect(repo, root_prefixes(repo), payload)
 
     _register_mode(app, mode)
+    register_host_name(app, repo, editing, (runtime_dir, _started(runtime_dir)))
     _register_allowed_roots(app, repo, editing)
     register_drafts(app, repo, editing)
     register_history(app, repo, editing)
@@ -285,6 +295,31 @@ def create_app(
     register_session(app, editing.browsers, stage_box, lock_box)
     register_left_behind(app, repo, editing.marks)
     return app
+
+
+_MISSING_DEFAULT_HOSTNAME = (
+    "還沒保存新納管預設主機名稱，這份檔案現在不能納管。"
+    "下一步：到「設定」的「新納管預設主機名稱」確認或輸入這台機器的名稱"
+)
+
+
+def _started(runtime_dir: str) -> str:
+    """服務的這一次啟動：產生啟動識別碼、發布到執行期目錄，回識別碼（#385）。
+
+    發布失敗不擋啟動（候選的任何問題都不擋）：識別碼仍留在記憶體，只是寫檔程式讀不到它、
+    記不下候選，畫面會顯示尚未確認。失敗照樣大聲說，印到標準錯誤（服務的紀錄）。
+    """
+    start_id = new_start_id()
+    try:
+        publish_start_id(runtime_dir, start_id)
+    except (OSError, WriterError) as error:
+        print(
+            f"config_manager：本次啟動的識別碼沒有發布到 {runtime_dir}（{error}），"
+            "啟動工具記不下主機名稱候選，畫面會顯示目前主機名稱尚未確認。"
+            "下一步：確認執行期目錄存在且服務使用者可寫，再重新啟動服務",
+            file=sys.stderr,
+        )
+    return start_id
 
 
 def _checked_mode(mode: str) -> str:
@@ -406,10 +441,10 @@ def _onboard_config(
     except ConfigListError as error:
         # 與既有條目衝突（target／uid／source 重複）：與目前狀態相牴觸。
         raise HTTPException(status_code=409, detail=str(error)) from error
-    except HostnameInvalid as error:
-        # CM_HOSTNAME 設成不安全值：部署層的錯（非請求端能修），大聲失敗成帶訊息的 500，
-        # 不是先前那樣漏接成裸 500（#14 盤點發現）。inspect 也做同樣的映射。
-        raise HTTPException(status_code=500, detail=str(error)) from error
+    except DefaultHostnameMissing as error:
+        # 還沒保存新納管預設主機名稱（#385）：與目前狀態相牴觸、不是送錯值——保存之後同一個請求
+        # 就會成功。什麼都沒寫。
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except UidHorizonReached as error:
         # uid 的 8 碼 base36 空間用盡（2059 之後，#231）：identity 精心寫的可行動訊息（指出
         # horizon 與 ref 格式契約）要保住成帶訊息的 500，不被 FastAPI 的「Internal Server
@@ -417,7 +452,7 @@ def _onboard_config(
         raise HTTPException(status_code=500, detail=str(error)) from error
     except (OnboardLeftBehind, WriterError, CalledProcessError, OSError) as error:
         # 寫入／commit／回滾路徑失敗（#222）：OnboardLeftBehind 是回滾也失敗、指名孤兒殘留；
-        # WriterError／CalledProcessError／OSError 是磁碟或 git 出錯。比照 HostnameInvalid 映成
+        # WriterError／CalledProcessError／OSError 是磁碟或 git 出錯。比照 UidHorizonReached 映成
         # 帶訊息的 500（伺服器側的錯、非使用者輸入），不裸 500——OnboardLeftBehind 指名殘留與
         # 下一步的可行動訊息要保住，不被 FastAPI 的「Internal Server Error」蓋掉。
         raise HTTPException(status_code=500, detail=str(error)) from error
@@ -720,7 +755,7 @@ def _browse_filesystem(roots: tuple[str, ...], path: str) -> dict[str, object]:
     return _as_listing(listing)
 
 
-def _inspect(roots: tuple[str, ...], payload: InspectInput) -> dict[str, object]:
+def _inspect(repo: str, roots: tuple[str, ...], payload: InspectInput) -> dict[str, object]:
     """偵測候選檔案的邏輯：讀來源（白名單）→ 以呼叫端給的 format 解析 → 列歧義、算摘要。
 
     format 由呼叫端提供，伺服器不猜（#195）。歧義**不拒絕**、列在回應（yaml 才會有）；語法
@@ -728,13 +763,10 @@ def _inspect(roots: tuple[str, ...], payload: InspectInput) -> dict[str, object]
     這正是 #185 把結構化錯誤延到 #195 的那一塊。
     """
     _reject_nul(payload.source_path, "source_path")
-    # 納管當下會用的 hostname，讓確認畫面在按下納管前就能核對機器身分（AC5，#14）。
-    # CM_HOSTNAME 設成不安全值是部署層的錯，非請求端能修——大聲失敗成帶訊息的 500，
-    # 不是靜默把身分清洗掉，也不是裸 500（不變式 2）。
-    try:
-        hostname = local_hostname()
-    except HostnameInvalid as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+    # 納管當下會用的 hostname，讓確認畫面在按下納管前就能核對機器身分（AC5，#14）。#385 起它是
+    # 清單檔已保存的新納管預設主機名稱；還沒保存時回報缺少，確認畫面據此停用納管、指向設定。
+    hostname = load_list(repo)[1].defaults.hostname
+    problem = None if hostname is not None else _MISSING_DEFAULT_HOSTNAME
 
     source = _read_for_inspect(roots, payload.source_path)
     if payload.format == "raw":
@@ -747,6 +779,7 @@ def _inspect(roots: tuple[str, ...], payload: InspectInput) -> dict[str, object]
             "types": {},
             "permissions": _as_permissions(source.permissions),
             "hostname": hostname,
+            "hostname_problem": problem,
         }
     text = _decode_for_inspect(source.content, payload)
     try:
@@ -778,6 +811,7 @@ def _inspect(roots: tuple[str, ...], payload: InspectInput) -> dict[str, object]
         "types": types,
         "permissions": _as_permissions(source.permissions),
         "hostname": hostname,
+        "hostname_problem": problem,
     }
 
 

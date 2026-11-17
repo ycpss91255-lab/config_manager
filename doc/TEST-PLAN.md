@@ -1797,8 +1797,9 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `io/errors` | T7／T8／T15／T20／T21——各具名例外在其所屬的測試介面被斷言；`OnboardLeftBehind`（納管回滾失敗）在 `io/onboard` 的整合規格被斷言（#173）；`PromoteLeftBehind`（進版回滾失敗）由 T9 的回滾規格擁有（#19）；`BrowseError` 族（瀏覽白名單外／不存在／不是目錄／讀不出來）在 T9 的 `GET /api/browse` 被斷言（#185；不存在是 F1 起） | 已落地 |
 | `io/parsers` | T6 | 已落地（#17）：`edit_source` 讀來源複本→`set_value`→`dump`→原子寫回；原樣保證由 `core/parse` 的單元規格釘住。`read_source` 讀來源複本原文供 API 存草稿當底（#19），效果透過 T9 的 `POST /api/drafts` 觀察；`as_text`／`as_bytes`：`raw` 的內容無損穿過文字（surrogateescape），寫出與退版逐位元組不變（人工驗證 U07） |
 | `io/promote` | 效果透過 T9 觀察：`POST /api/promote` 的寫出＋記錄＋第 k 份失敗整批回滾（目標還原、紀錄撤銷）——編排層，同 `io/onboard` 的處理；回滾也失敗時丟 `PromoteLeftBehind`（#19）；`companions`＝同一筆紀錄裡一起寫回 repo 的其他檔案（退版時的 schema 與清單檔），與來源複本同進同退，以真實 git 的整合規格觀察（#39） | 已落地（`apply`） |
-| `io/source` | T22（匯入時刻對外界的讀取，介面議定於 #177） | 已落地：路徑判定（realpath 後比對白名單、一般檔案檢查）與一次性讀取（#174）、讀取失敗的三種分類（不存在／讀不到／上層目錄無 traverse，#182）。`local_hostname` 的部署穩定性見 #178 |
-| `io/host_candidate` | T27（寫檔程式）；服務的啟動識別碼與候選判定由 T9 觀察（#385） | 部分落地：寫檔程式已落地；服務端的發布與讀取待 T9（#385） |
+| `io/source` | T22（匯入時刻對外界的讀取，介面議定於 #177） | 已落地：路徑判定（realpath 後比對白名單、一般檔案檢查）與一次性讀取（#174）、讀取失敗的三種分類（不存在／讀不到／上層目錄無 traverse，#182）。`local_hostname` 已移除：納管用的名稱改為清單檔的 `[defaults] hostname`（#385） |
+| `io/host_candidate` | T27（寫檔程式）；服務的啟動識別碼與候選判定由 T9 觀察（#385） | 已落地 |
+| `io/default_hostname` | 效果透過既有介面觀察：清單檔的 `[defaults] hostname`→T1（`load`）與 T9（`PUT /api/host-name`）；修改前後的值與操作者記在 commit、寫入中途失敗回滾（#385） | 已落地 |
 | `io/paths` | 效果透過既有介面觀察：`blocking_parent` 的「上層目錄擋住去路」分類在 T22（`io/source`）與 T20（`io/digest`）的 EACCES 規格被斷言——`source` 與 `digest` 共用的薄工具，同 `io/repo` 的處理（#214） | 已落地（`ancestors`／`blocking_parent`） |
 | `io/onboard` | 效果透過既有介面觀察：逐位元組相同→T20（`io/digest`）、清單檔條目→T1（`load`）、匯入 commit→T7（`io/git.history`）（#12）——編排層，不算新值，同 `io/repo` 的處理。**匯入紀錄的作者＝傳入的身分、隨之而變**（以 `history()` 的 `Change.author` 驗、不同身分各對各的紀錄，#114）。重複攔在寫入前（#172）與寫入失敗即整批回滾（#173）以注入失敗＋`git status` 觀察，回滾也失敗時丟 `OnboardLeftBehind` | 已落地（`onboard`）。**（F37）納管回滾未竟（`OnboardLeftBehind`，整合規格）的訊息只有一個「下一步：」、沒有「。。」；原本的失敗自帶的建議標明給維護者參考；步驟先保存殘留、再交維護者處理原本的失敗、最後由維護者核對殘留的歸屬與用途再決定保留、還原或移除——不預設刪除** |
 | `io/unmanage` | 效果透過既有介面觀察：清單檔條目→T1（`load`）、`unmanage` 紀錄→T7（`history`）、來源複本、schema 檔（有的話一併拿掉，#38）與 target 直接看檔案系統——編排層，同 `io/onboard` 的處理；寫入中途失敗整批回滾、回滾也失敗丟 `UnmanageLeftBehind`（#28） | 已落地（`unmanage`） |
@@ -1818,6 +1819,7 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `api/shapes` | 無獨立測試介面——`api/routes` 與 `api/drift` 共用的回應形狀（草稿檢視、驗證問題），行為由 T9 的草稿與處置端點擋著（#29） | 已落地 |
 | `api/search` | T9 | 已落地（`GET /api/search`——參數層級搜尋，索引每次請求重建，#32） |
 | `api/attributes` | T9 | 已落地（`POST /api/configs/{uid}/attributes`——僅開發者，修改名稱／群組／主機／說明，#286） |
+| `api/host_name` | T9 | 已落地（`GET`／`PUT /api/host-name`——查看不需編輯權；確認與修改限開發者、需要編輯權，#385） |
 | `api/schema` | T9 | 已落地（`POST /api/configs/{uid}/schema`——僅開發者，產生 schema 骨架，#38；`schema_view` 供單筆內容帶欄位提示、人工指定的型別與 schema 的錯誤，#40／#285；`POST /api/configs/{uid}/types` 指定／清除型別、`as_specified` 讓指定成 double 的欄位寫出帶小數點，#285） |
 | `api/history` | T9 | 已落地（`GET /api/configs/{uid}/history`、`GET /api/configs/{uid}/history/{sha}`、`POST /api/configs/{uid}/revert`——歷史與退版的端點與邏輯，自 `api/routes` 拆出以免該模組超過千行，#24） |
 | `api/left_behind` | T9 | 已落地（`GET /api/left-behind`、回滾錯誤的 500 物件 `{kind: "rollback", outcome, …}`、寫入成功的 `left_behind_cleared`／解除納管的 `left_behind_untracked`、進版／處置／退版共用的寫入失敗轉換——#345）。標記掛在 app 上、未持久化；T11 由畫面觀察（未還原標示、橫幅、警示） |
