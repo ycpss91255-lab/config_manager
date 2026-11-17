@@ -96,18 +96,18 @@ def read_candidate(runtime_dir: str, start_id: str) -> Candidate | Unconfirmed:
     return _judge(_parse(raw), start_id)
 
 
-def _judge(record: dict[str, str] | str, start_id: str) -> Candidate | Unconfirmed:
+def _judge(content: dict[str, str] | str, start_id: str) -> Candidate | Unconfirmed:
     """候選檔的內容屬不屬於 `start_id` 這次啟動、是不是一個可用的名稱。"""
-    if isinstance(record, str):
-        return Unconfirmed(f"候選內容不合法：{record}。下一步：重跑啟動工具，或由開發者直接輸入")
-    if record.get("start_id") != start_id:
+    if isinstance(content, str):
+        return Unconfirmed(f"候選內容不合法：{content}。下一步：重跑啟動工具，或由開發者直接輸入")
+    if content.get("start_id") != start_id:
         return Unconfirmed(NOT_RECEIVED)
-    if "unavailable" in record:
+    if "unavailable" in content:
         return Unconfirmed(
-            f"啟動工具這次在主機上沒有取得名稱：{record['unavailable']}。"
+            f"啟動工具這次在主機上沒有取得名稱：{content['unavailable']}。"
             "下一步：處理那個原因後重跑啟動工具，或由開發者直接輸入"
         )
-    hostname = record.get("hostname", "")
+    hostname = content.get("hostname", "")
     if not is_safe_hostname(hostname):
         return Unconfirmed(
             f"候選內容不合法：名稱「{hostname}」不是安全的 hostname。"

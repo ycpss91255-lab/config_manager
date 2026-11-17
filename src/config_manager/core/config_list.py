@@ -401,8 +401,8 @@ def _update_table(table: items.Table, entry: FileEntry) -> None:
     body.extend(trailing)
 
 
-def _check_integrity(config_list: ConfigList) -> None:
-    """跨條目的完整性檢查。硬錯誤丟具名例外，軟問題收進 warnings。"""
+def _check_default_hostname(config_list: ConfigList) -> None:
+    """`[defaults] hostname` 要是安全的 hostname（#385）：它會成為之後每一筆新條目的 hostname。"""
     default_hostname = config_list.defaults.hostname
     if default_hostname is not None and not is_safe_hostname(default_hostname):
         raise UnsafeDefaultHostname(
@@ -410,6 +410,11 @@ def _check_integrity(config_list: ConfigList) -> None:
             "它會成為新條目的 hostname，寫進 files/<hostname>/ 的路徑與變更紀錄的主旨。"
             "下一步：改成這台機器的正規名稱（只用英數字、.、_、-，例如 amr01）"
         )
+
+
+def _check_integrity(config_list: ConfigList) -> None:
+    """跨條目的完整性檢查。硬錯誤丟具名例外，軟問題收進 warnings。"""
+    _check_default_hostname(config_list)
     seen_uid: dict[str, FileEntry] = {}
     seen_target: dict[str, FileEntry] = {}
     seen_source: dict[str, FileEntry] = {}
