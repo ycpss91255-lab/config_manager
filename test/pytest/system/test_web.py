@@ -3675,8 +3675,9 @@ def test_changing_a_double_keeps_the_comments_and_the_untouched_fields_as_they_w
     open_page, repo
 ):
     # v0.3.0 檢查點 2「從介面修改一個 double 參數後進版，寫出的值帶小數點；註解與未修改欄位的格式
-    # 完全保留」（#353）：上一則的檔只有一個欄位、沒有註解。被改的那一行，註解前的空白縮成一個，
-    # 那是 T6 記下的唯一正規化（維護者 11/17 同意註明這個邊界）；其餘逐位元組不變。
+    # 完全保留」（#353）：上一則的檔只有一個欄位、沒有註解。新值寫得下原本的位置，所以被改的那一行
+    # 註解也留在原欄位，整份只有那個值變了。（新值長到碰到註解時，註解前退成一個空白——T6 記下的
+    # 唯一正規化，由 test_parse 的規格驗。）
     original = "# nav2 的速度上限\nmax_vel: 0.8  # m/s\nname: 'amr'  # 引號要留著\nretries: 3\n"
     targets = _listing_many(repo, {"p": original})
     page = _open_panel(open_page())
@@ -3689,7 +3690,7 @@ def test_changing_a_double_keeps_the_comments_and_the_untouched_fields_as_they_w
     page.wait_for_selector("[data-testid='promote-done']", state="visible")
 
     assert targets["p"].read_text(encoding="utf-8") == (
-        "# nav2 的速度上限\nmax_vel: 2.0 # m/s\nname: 'amr'  # 引號要留著\nretries: 3\n"
+        "# nav2 的速度上限\nmax_vel: 2.0  # m/s\nname: 'amr'  # 引號要留著\nretries: 3\n"
     )
 
 
