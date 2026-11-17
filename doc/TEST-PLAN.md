@@ -1798,7 +1798,7 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `io/parsers` | T6 | 已落地（#17）：`edit_source` 讀來源複本→`set_value`→`dump`→原子寫回；原樣保證由 `core/parse` 的單元規格釘住。`read_source` 讀來源複本原文供 API 存草稿當底（#19），效果透過 T9 的 `POST /api/drafts` 觀察；`as_text`／`as_bytes`：`raw` 的內容無損穿過文字（surrogateescape），寫出與退版逐位元組不變（人工驗證 U07） |
 | `io/promote` | 效果透過 T9 觀察：`POST /api/promote` 的寫出＋記錄＋第 k 份失敗整批回滾（目標還原、紀錄撤銷）——編排層，同 `io/onboard` 的處理；回滾也失敗時丟 `PromoteLeftBehind`（#19）；`companions`＝同一筆紀錄裡一起寫回 repo 的其他檔案（退版時的 schema 與清單檔），與來源複本同進同退，以真實 git 的整合規格觀察（#39） | 已落地（`apply`） |
 | `io/source` | T22（匯入時刻對外界的讀取，介面議定於 #177） | 已落地：路徑判定（realpath 後比對白名單、一般檔案檢查）與一次性讀取（#174）、讀取失敗的三種分類（不存在／讀不到／上層目錄無 traverse，#182）。`local_hostname` 的部署穩定性見 #178 |
-| `io/host_candidate` | T27（寫檔程式）；服務的啟動識別碼與候選判定由 T9 觀察（#385） | 未落地（#385） |
+| `io/host_candidate` | T27（寫檔程式）；服務的啟動識別碼與候選判定由 T9 觀察（#385） | 部分落地：寫檔程式已落地；服務端的發布與讀取待 T9（#385） |
 | `io/paths` | 效果透過既有介面觀察：`blocking_parent` 的「上層目錄擋住去路」分類在 T22（`io/source`）與 T20（`io/digest`）的 EACCES 規格被斷言——`source` 與 `digest` 共用的薄工具，同 `io/repo` 的處理（#214） | 已落地（`ancestors`／`blocking_parent`） |
 | `io/onboard` | 效果透過既有介面觀察：逐位元組相同→T20（`io/digest`）、清單檔條目→T1（`load`）、匯入 commit→T7（`io/git.history`）（#12）——編排層，不算新值，同 `io/repo` 的處理。**匯入紀錄的作者＝傳入的身分、隨之而變**（以 `history()` 的 `Change.author` 驗、不同身分各對各的紀錄，#114）。重複攔在寫入前（#172）與寫入失敗即整批回滾（#173）以注入失敗＋`git status` 觀察，回滾也失敗時丟 `OnboardLeftBehind` | 已落地（`onboard`）。**（F37）納管回滾未竟（`OnboardLeftBehind`，整合規格）的訊息只有一個「下一步：」、沒有「。。」；原本的失敗自帶的建議標明給維護者參考；步驟先保存殘留、再交維護者處理原本的失敗、最後由維護者核對殘留的歸屬與用途再決定保留、還原或移除——不預設刪除** |
 | `io/unmanage` | 效果透過既有介面觀察：清單檔條目→T1（`load`）、`unmanage` 紀錄→T7（`history`）、來源複本、schema 檔（有的話一併拿掉，#38）與 target 直接看檔案系統——編排層，同 `io/onboard` 的處理；寫入中途失敗整批回滾、回滾也失敗丟 `UnmanageLeftBehind`（#28） | 已落地（`unmanage`） |
