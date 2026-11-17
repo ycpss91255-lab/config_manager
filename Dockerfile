@@ -109,6 +109,16 @@ COPY config/pip/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     && rm -f /tmp/requirements.txt
 
+# 執行期目錄（#385）：服務每次啟動發布啟動識別碼、啟動工具的寫檔程式記下主機名稱候選的地方。
+# 在容器自己的可寫層——**不在設定庫、不在任何資料卷**（compose 的掛載都不涵蓋它）：候選只對一次
+# 啟動有效，保存下來沒有用處，現有的 git bundle 備份、資料卷打包、設定庫複製都不包含它。服務與
+# 寫檔程式（`docker compose exec` 不指定 -u）都以服務使用者執行，所以由它擁有、只有它能讀寫。
+# devel 與 runtime 共用。容器每次啟動時 entrypoint 先清空它。
+ARG USER_NAME="user"
+RUN mkdir -p /run/config_manager \
+    && chown "${USER_NAME}:${USER_NAME}" /run/config_manager \
+    && chmod 0700 /run/config_manager
+
 # ── devel ───────────────────────────────────────────────────────────────────
 FROM devel-base AS devel
 

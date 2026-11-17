@@ -56,10 +56,9 @@ services:
       # 所以掛得到才放行；沒設＝什麼都不放行（安全預設，不變式 4）。持久化、可從介面維護
       # 的白名單見 #15；這裡是 v0.2.0 的環境變數接線。
       CM_ALLOWED_ROOTS: ${CM_TARGET_ROOT:-/opt/robot/config}
-      # 這台機器在納管紀錄裡的正規名稱（#178）。納管當下讀一次寫進檔案、之後永不再讀，
-      # 所以要穩定。沒設就回 gethostname()——host 網路模式下那是穩定的主機名；bridge 下
-      # gethostname() 是每次重建都變的容器 ID，那種部署務必在這裡（或 .env）明寫。
-      CM_HOSTNAME: ${CM_HOSTNAME:-}
+      # 沒有 CM_HOSTNAME（#385）：新納管的預設主機名稱改由介面確認後存在清單檔的 [defaults]，
+      # 候選由 `just docker run` 的 post-run hook 在主機上讀取、交給容器記下。容器環境裡留著舊的
+      # CM_HOSTNAME 會讓 entrypoint 停止啟動，所以這裡不能再傳它，連空值也不行。
       # 開發／部署模式（#47）：後端依這個變數判定、回報給前端，前端改不了。這一份是現場用的，
       # 所以預設是**部署**——與程式自己的預設同一邊（沒設定時落向較嚴的那一種）。開發模式由
       # compose.dev.yaml 疊上去，不是在這裡改。

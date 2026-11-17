@@ -189,9 +189,35 @@ seed_allowed_roots() {
   printf 'entrypoint: 已從 CM_ALLOWED_ROOTS 種下白名單設定檔 %s\n' "${file}"
 }
 
+# 舊的 CM_HOSTNAME（#178 的做法）還留在容器環境裡就停止啟動（#385）。名字改由清單檔明確保存的
+# [defaults] hostname 決定，不再由環境變數決定；留著它會讓人以為它還在起作用。**空值也算**：舊的
+# compose.yaml 會傳一個空的 CM_HOSTNAME 進容器，那正是要清掉的舊接線。
+refuse_leftover_hostname_variable() {
+  [[ -z "${CM_HOSTNAME+set}" ]] && return 0
+  die "容器環境裡還有舊的 CM_HOSTNAME（值：「${CM_HOSTNAME}」）。新納管的預設主機名稱改由" \
+    "介面確認後存在清單檔，不再由環境變數決定，所以這次沒有啟動。" \
+    "下一步：依序 1. 移除舊變數（compose 檔、.env、docker run -e 裡的 CM_HOSTNAME）" \
+    "2. 重新啟動服務 3. 到介面「設定」確認新納管預設主機名稱"
+}
+
+# 清空執行期目錄（#385）：上一次啟動留下的識別碼與候選都屬於別次啟動，本來就不被採用；清掉是讓
+# 寫檔程式不會讀到上一次的識別碼。目錄不存在（不在映像裡跑）就沒有東西要清。清不掉不擋啟動，
+# 但要說出來。
+clear_runtime_dir() {
+  local dir="/run/config_manager"
+  [[ -d "${dir}" ]] || return 0
+  if ! find "${dir}" -mindepth 1 -delete 2>/dev/null; then
+    printf 'entrypoint: 執行期目錄 %s 沒有清乾淨，上一次啟動的檔案可能還在；' "${dir}" >&2
+    printf '它們屬於別次啟動，不會被採用。下一步：確認該目錄由服務使用者擁有\n' >&2
+  fi
+}
+
 check_backend_preconditions() {
   local repo="${CM_CONFIG_REPO:-}"
   local output
+
+  refuse_leftover_hostname_variable
+  clear_runtime_dir
 
   [[ -n "${repo}" ]] || die "CM_CONFIG_REPO 未設定，backend 沒有來源 repo 可以服務。" \
     "下一步：把它設成掛載進來的 config-repo 路徑"

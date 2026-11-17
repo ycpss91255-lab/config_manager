@@ -32,6 +32,6 @@ restore *ARGS:
 dev VERB *ARGS:
     @COMPOSE_FILE=compose.yaml:compose.dev.yaml {{justfile_directory()}}/script/{{VERB}}.sh {{ARGS}}
 
-# bridge 網路：先疊上 compose.bridge.yaml 再做後面的動作（要先設 CM_HOSTNAME），例如 `just docker bridge run`
+# bridge 網路：先疊上 compose.bridge.yaml 再做後面的動作，例如 `just docker bridge run`
 bridge VERB *ARGS:
     @COMPOSE_FILE=compose.yaml:compose.bridge.yaml {{justfile_directory()}}/script/{{VERB}}.sh {{ARGS}}
