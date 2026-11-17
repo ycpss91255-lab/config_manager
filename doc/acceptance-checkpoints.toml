@@ -154,11 +154,27 @@ title = '納管與白名單'
 number = 1
 text = '能從介面納管至少三種格式的真實 config；納管後來源檔案與原始檔案逐位元組相同；正確記錄原始 owner／group／mode；hostname 自動填入且寫進檔案，重跑不因環境改變而變動'
 # 「真實 config」指磁碟上的真檔案經真的後端納管；規格的內容是人造的（維護者 11/17 在 #353 同意註明）。
-specs = []
-uncovered = '''待維護者決定（#353，11/17）：「重跑不因環境改變而變動」靠 CM_HOSTNAME 提供穩定的 hostname（#178、
-TEST-PLAN T22），但 #178 沒有明確取代 PRD 不變式 8 的「命名的分歧…絕不來自環境變數」。決定之前這條不算通過。
-其餘子句已有規格：三種格式從介面納管、來源逐位元組相同、原始 owner／group／mode 寫進清單檔、hostname 寫進
-清單檔、納管後換了環境已存的 hostname 不變（test_onboard.py 新增的三則）。'''
+# hostname 那一句照維護者 11/17 的決定對照：名稱只來自明確保存的設定（PRD 不變式 8），不由環境變數決定；
+# 由 #385 實作（PR #386）。「自動填入」＝啟動工具在主機上讀到的名稱當本次啟動取得的候選、預填給開發者確認
+# 後保存，之後納管時自動寫進那一筆；「重跑不因環境改變而變動」＝名稱不讀環境變數（設了舊的 CM_HOSTNAME
+# 也不用它），預設值改了也不替已存的條目改名，compose 也不再把 CM_HOSTNAME 帶進容器。實際經啟動工具起服務
+# 的那一半在 script/compose_smoke.sh（CI 的 Linux runner，T25），不在這份對照表跑得到的範圍。
+specs = [
+  'test/pytest/system/test_web.py::test_onboarding_a_config_of_each_format_shows_it_in_the_list',
+  'test/pytest/integration/test_onboard.py::test_onboarded_source_is_byte_identical_in_the_repo',
+  'test/pytest/integration/test_onboard.py::test_permissions_record_the_original_mode',
+  'test/pytest/integration/test_onboard.py::test_the_config_list_records_the_original_owner_and_group',
+  'test/bats/unit/hooks_post_run.bats::讀到名稱時以標準輸入交給容器裡的寫檔程式，參數不經環境變數（#385）',
+  'test/pytest/integration/test_host_candidate.py::test_with_no_candidate_the_writer_records_this_starts_id_and_the_name',
+  'test/pytest/system/test_api.py::test_a_candidate_recorded_for_this_start_is_offered_as_this_starts_candidate',
+  'test/pytest/system/test_api.py::test_a_single_source_is_prefilled_but_not_saved',
+  'test/pytest/system/test_web.py::test_the_settings_page_offers_this_starts_candidate_without_calling_it_the_live_hostname',
+  'test/pytest/system/test_api.py::test_onboarding_after_saving_writes_the_saved_hostname_into_the_new_entry',
+  'test/pytest/integration/test_onboard.py::test_the_config_list_records_the_saved_default_hostname_at_onboarding',
+  'test/pytest/integration/test_onboard.py::test_a_later_change_of_environment_or_default_leaves_an_onboarded_entry_as_recorded',
+  'test/pytest/system/test_api.py::test_changing_the_default_after_onboarding_leaves_that_entry_unchanged',
+  'test/bats/integration/compose.bats::三種組合都不把 CM_HOSTNAME 帶進容器，主機有設定也一樣（#385）',
+]
 
 [[milestone.checkpoint]]
 number = 2
@@ -474,11 +490,22 @@ specs = [
 [[milestone.checkpoint]]
 number = 3
 text = '型別未知的項目退回文字區塊並明確標示為未結構化編輯'
-specs = []
-uncovered = '''有缺陷，待維護者決定處理方式（#353，11/17）：型別未知的值退回的是單行輸入框，值裡有換行時，改過
-之後換行變成空格（規格存在 #353 的證據資料夾，紅燈）。原文附錄 C.2 只說 textarea「已足夠」，不是必須；
-但退回的文字區塊要能操作多行內容（維護者 11/17）。其餘已有規格：null、空清單的元素、型別混雜的清單元素、
-日期都退回文字並標「未結構化編輯」（T12 的種類）。'''
+# 型別未知的種類照 T12：null、空清單的元素、型別混雜的清單元素、日期。退回的文字區塊要能操作多行內容
+# （維護者 11/17）：#353 對照時發現的缺陷（改過之後換行變成空格、存別的欄位時混型清單被重寫）由 #383
+# 修正（PR #384）。#353 證據資料夾裡那則紅燈規格（改一行之後其餘換行保留）與 #383 的
+# test_changing_one_line_of_a_multiline_value_without_a_type_keeps_the_other_line_breaks 是同一個行為，
+# 不另外重複加。textarea 是允許、不是必須（附錄 C.2）：沒有換行的值仍是單行輸入框。
+specs = [
+  'test/pytest/system/test_web.py::test_a_value_without_a_type_is_editable_as_text_and_marked_unstructured',
+  'test/pytest/system/test_web.py::test_an_element_added_to_an_empty_list_is_edited_as_text_and_marked_unstructured',
+  'test/pytest/system/test_web.py::test_other_values_without_a_type_are_edited_as_text_and_marked_unstructured',
+  'test/pytest/system/test_web.py::test_a_multiline_value_without_a_type_opens_with_its_line_breaks',
+  'test/pytest/system/test_web.py::test_changing_one_line_of_a_multiline_value_without_a_type_keeps_the_other_line_breaks',
+  'test/pytest/system/test_web.py::test_saving_another_field_leaves_a_multiline_value_without_a_type_as_it_was',
+  'test/pytest/system/test_web.py::test_saving_another_field_leaves_a_mixed_list_without_line_breaks_as_it_was',
+  'test/pytest/system/test_web.py::test_a_saved_multiline_value_without_a_type_comes_back_the_same_after_reopening',
+  'test/pytest/system/test_api.py::test_a_multiline_string_where_the_type_is_unknown_reads_back_the_same_after_promotion',
+]
 
 # ── v0.9.0 部署模式與 UX ──────────────────────────────────────────────────
 
