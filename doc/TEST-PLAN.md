@@ -855,7 +855,7 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 | 重啟保留範圍照驗證清單 U40：納管並進版一筆之後把容器**整個移除再建**（volume 留著），清單、已進版的值、歷史、白名單都在，目標狀態重新比對；未進版草稿與身分不在 |
 | **（#385）經 `script/run.sh` 起服務後，設定 API 回報的「本次啟動取得的候選」等於 runner 的 `hostname`**（host 與 bridge 各一次；bridge 下容器自己的名稱是容器 ID，候選仍是主機的名稱） |
 | **（#385）重跑 `script/run.sh`：容器沿用、服務不重啟（啟動識別碼不變），候選不變** |
-| **（#385）`docker restart` 之後設定 API 回報「目前主機名稱尚未確認」；再跑 `script/run.sh` 就取得，服務不重啟** |
+| **（#385）`docker restart` 之後設定 API 回報「目前主機名稱尚未確認」，執行期目錄裡上一次的候選檔已被 entrypoint 清掉；再跑 `script/run.sh` 就取得，服務不重啟** |
 | **（#385）執行期目錄不在容器實際的掛載清單裡（`docker inspect`）** |
 | 建好的 `runtime` 映像裡 import 不到任何測試工具（`dependencies.bats` 只看文字，這裡看映像本身） |
 
