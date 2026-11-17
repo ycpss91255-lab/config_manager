@@ -35,7 +35,8 @@ ARG APT_MIRROR="mirror.twds.com.tw"
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 # bats：smoke 規格。shellcheck：script/ 底下的每一支 shell 腳本。git：lint_commit
-# 要讀歷史，而 pytest 那組測試會操作真實的 repo。
+# 要讀歷史，而 pytest 那組測試會操作真實的 repo。vim-tiny：v0.5.0 檢查點 1 寫的是
+# 「以 vim 直接修改一個已納管的目標檔案」，規格就真的用 vim 改，不以直接寫檔代替（#353）。
 #
 # 腳本數量不寫在這裡：能從樹推導出來的數字不另外抄一份（不變式 9）。這一行原本寫
 # 「23 shell scripts」，實際上已經是 27 支。
@@ -47,6 +48,7 @@ RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sou
         curl \
         git \
         shellcheck \
+        vim-tiny \
     && rm -rf /var/lib/apt/lists/*
 
 # 釘住版本，不用 "latest"：會在你腳下自己變動的 linter 會讓一筆無關的 commit 變紅，

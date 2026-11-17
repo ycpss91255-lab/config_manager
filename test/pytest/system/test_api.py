@@ -12,11 +12,13 @@ PDF §3.6.1 軸 2 的層級只有 Unit／Integration／System／Acceptance。先
 
 import contextlib
 import datetime
+import grp
 import http.server
 import http.cookiejar
 import json
 import os
 import pathlib
+import pwd
 import re
 import stat
 import subprocess
@@ -411,6 +413,30 @@ def test_import_a_source_outside_the_whitelist_is_refused(api, tmp_path):
 
     assert exc.value.code == _UNPROCESSABLE
     assert "白名單之外" in _detail(exc.value)  # 被拒的原因是白名單，不是別種 422
+
+
+@pytest.mark.parametrize("where", ["browse", "inspect", "onboard"])
+def test_a_plain_dotdot_path_out_of_the_whitelist_is_refused(api, sources_root, where):
+    # v0.2.0 檢查點 4「以 ../ 嘗試逃逸白名單被攔截」的納管／瀏覽路徑那一半（#353）：路徑字面上
+    # 從白名單根出發、用 `..` 走出去。其餘系統規格裡的 `..` 都夾在連結迴圈裡（F18）；單純的
+    # `../` 只在核心層（T4）驗過。檔案真的存在，被拒的原因才會是白名單，不是找不到。
+    if os.environ.get("CM_SYSTEM_BASE_URL"):
+        pytest.skip("需在白名單根的上一層建檔")
+    outside = pathlib.Path(sources_root).parent / f"dotdot_escape_{where}.yaml"
+    outside.write_bytes(b"secret: 1\n")
+    path = f"{sources_root}/../{outside.name}"
+    _set_session(api)
+    calls = {
+        "browse": lambda: _get(api, f"/api/browse?{urllib.parse.urlencode({'path': path})}"),
+        "inspect": lambda: _post(api, "/api/inspect", {"source_path": path, "format": "yaml"}),
+        "onboard": lambda: _post(api, "/api/configs", {"source_path": path, "format": "yaml"}),
+    }
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        calls[where]()
+
+    detail = json.dumps(_detail(exc.value), ensure_ascii=False)
+    assert (exc.value.code, "白名單之外" in detail) == (_UNPROCESSABLE, True)
 
 
 def test_import_with_an_unknown_format_is_refused_as_a_bad_value(api, sources_root):
@@ -867,6 +893,23 @@ def test_inspect_returns_format_ambiguities_and_summary(api, sources_root):
     assert result["ambiguities"][0]["readings"]  # 有給可能的讀法
     # 原始權限一併帶回（§5.1 一行摘要的第三項）。
     assert result["permissions"]["mode"]
+
+
+def test_a_file_with_ambiguous_values_is_onboarded_and_listed(api, sources_root):
+    # v0.2.0 檢查點 2「含歧義值的檔案能列出警告清單且不阻擋匯入」的後一半（#353）：偵測時列出
+    # 歧義，納管照樣成功、條目出現在清單裡。歧義只在別的規格的前置步驟裡被納管過，沒有一則
+    # 明文斷言它。
+    _set_session(api)
+    source = _write_source(sources_root, "ambiguous_onboard.yaml", b"enabled: no\nmax_vel: 0.8\n")
+    found = _post(api, "/api/inspect", {"source_path": source, "format": "yaml"})["ambiguities"]
+    assert [a["value"] for a in found] == ["no"]
+
+    entry = _post(
+        api, "/api/configs",
+        {"source_path": source, "format": "yaml", "ambiguity_note": "enabled 的 no 是 false"},
+    )
+
+    assert entry["uid"] in [listed["uid"] for listed in _get(api, "/api/configs")]
 
 
 def test_inspect_previews_the_saved_default_hostname_onboarding_will_use(api, sources_root):
@@ -2007,6 +2050,26 @@ def test_promote_records_one_cfg_change_per_config_authored_by_the_session(api, 
         f"cfg({first['uid']}): 修改參數（{first['name']}@{first['hostname']}）"
         "|陳小明 <ming@example.com>",
     ]
+
+
+def test_promoting_writes_the_target_with_the_permissions_in_the_config_list(api, sources_root):
+    # v0.3.0 檢查點 5「寫出後目標的權限符合清單檔」（#353）：先把目標改成與清單檔不同的 mode，
+    # 進版寫出之後，目標的 mode／owner／group 是清單檔記的那一份。不先改的話，目標從納管起就是
+    # 那個權限，斷言分不出寫出時有沒有套用。owner／group 名字查得到就是名字、查不到就是數字。
+    _clear_drafts(api)
+    entry = _onboard(api, sources_root, "promote_permissions.yaml", b"count: 1\n")
+    wanted = _get(api, f"/api/configs/{entry['uid']}")["permissions"]
+    target = pathlib.Path(entry["target"])
+    target.chmod(0o600 if wanted["mode"] != "0600" else 0o640)
+
+    _promote_value(api, entry["uid"], "count", 2)
+
+    info = target.stat()
+    owner, group = wanted["owner"], wanted["group"]
+    owner_id = int(owner) if owner.isdigit() else pwd.getpwnam(owner).pw_uid
+    group_id = int(group) if group.isdigit() else grp.getgrnam(group).gr_gid
+    written = (f"{stat.S_IMODE(info.st_mode):04o}", info.st_uid, info.st_gid)
+    assert written == (wanted["mode"], owner_id, group_id)
 
 
 def test_promote_with_a_draft_whose_entry_left_the_list_writes_nothing(api, sources_root, listing):
@@ -3338,6 +3401,52 @@ def test_revert_writes_the_old_content_back_as_a_new_record_without_rewriting_hi
     assert [c["kind"] for c in _history(api, entry["uid"])] == ["revert", "cfg", "cfg"]
 
 
+_EVERY_KIND = "import,cfg,revert,adopt,meta,unmanage"
+
+
+def _changed_three_times_then_reverted(api, sources_root, name, back_to):
+    """納管 `count: 1` 後連續改成 2、3、4，再退回 `back_to` 那一版：`"onboarded"` 是納管那一筆，
+    `"first change"` 是第一次修改那一筆（cfg 裡最舊的）。回條目。"""
+    _clear_drafts(api)
+    entry = _onboard(api, sources_root, name, b"count: 1\n")
+    for value in (2, 3, 4):
+        _promote_value(api, entry["uid"], "count", value)
+    kind = {"onboarded": "import", "first change": "cfg"}[back_to]
+    version = _history(api, entry["uid"], kind)[-1]["sha"]
+    _post(api, f"/api/configs/{entry['uid']}/revert", {"version": version})
+    return entry
+
+
+@pytest.mark.parametrize(
+    ("back_to", "content"), [("onboarded", b"count: 1\n"), ("first change", b"count: 2\n")]
+)
+def test_after_three_changes_a_revert_restores_that_version_and_keeps_every_earlier_record(
+    api, sources_root, back_to, content
+):
+    # v0.4.0 檢查點 1「連續修改同一 config 三次後可退回第一版；退版後歷史仍可見全部四筆紀錄，
+    # 歷史未被截斷；目標內容確實回到第一版」（#353）。「第一版」原文沒有定義：納管那一版與第一次
+    # 修改那一版（U26「選第一次修改的版本」）各驗一次，不互相代替。四筆＝納管＋三次修改，退版後
+    # 一筆都不少，另多一筆退版。上面那一則只改兩次。
+    name = f"revert_three_{back_to.replace(' ', '_')}.yaml"
+    entry = _changed_three_times_then_reverted(api, sources_root, name, back_to)
+
+    kinds = [c["kind"] for c in _history(api, entry["uid"], _EVERY_KIND)]
+    written = pathlib.Path(entry["target"]).read_bytes()
+
+    assert (kinds, written) == (["revert", "cfg", "cfg", "cfg", "import"], content)
+
+
+def test_filtering_the_history_by_the_cfg_kind_leaves_the_revert_out(api, sources_root):
+    # v0.4.0 檢查點 1「以 cfg 類型過濾時退版紀錄不出現」（#353）：歷史的 cfg 類型篩選
+    # （`?prefix=cfg`，T7 那一列）只列 cfg。頁面的「只看內容變更」是另一個篩選，依 10/31 定案 E1
+    # 會列出退版，不在這一條裡。
+    entry = _changed_three_times_then_reverted(api, sources_root, "revert_filter.yaml", "onboarded")
+
+    kinds = [c["kind"] for c in _history(api, entry["uid"], "cfg")]
+
+    assert kinds == ["cfg", "cfg", "cfg"]
+
+
 def test_revert_to_a_version_outside_this_configs_history_is_refused(api, sources_root):
     # 拿別份 config 的 sha 會把別人的內容寫進來——擋成 422、什麼都不動。
     _clear_drafts(api)
@@ -3674,6 +3783,30 @@ def test_adopt_of_an_invalid_target_is_refused_with_the_line_and_nothing_changes
     assert _get(api, f"/api/configs/{entry['uid']}")["values"] == {"count": 1}
     assert _history(api, entry["uid"], "adopt") == []
     assert _state_of(api, entry["uid"]) == "drift"
+
+
+@pytest.mark.parametrize(
+    ("name", "edited", "expected"),
+    [
+        ("drift_tab.yaml", b"count: 7\nnested:\n\tb: 1\n", ("line", 3)),
+        ("drift_trailing.yaml", b"count: 7\nspeed: 1.5   \n", ("line", 2)),
+        # 重複 key 要列出所有出現的行號，在 `lines`；其餘問題只有一個行號，在 `line`。
+        ("drift_duplicate.yaml", b"count: 7\nspeed: 1.5\ncount: 8\n", ("lines", [1, 3])),
+    ],
+)
+def test_a_target_with_a_text_level_violation_is_refused_at_adoption_naming_the_lines(
+    api, sources_root, name, edited, expected
+):
+    # v0.3.0 檢查點 4「在文字層面注入 Tab 縮排、尾隨空白、重複 key 皆被攔截並指出行號（重複 key
+    # 須列出所有出現行號）」（#353）：納入目標現況是文字進到來源的入口；這三種在核心層驗過，
+    # 這裡在寫入點實際注入，而且都不在第一行。yes 那一種由上一則驗。
+    entry = _drifted(api, sources_root, name, edited=edited)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(api, f"/api/configs/{entry['uid']}/resolve", {"action": "adopt"})
+
+    field, where = expected
+    assert (exc.value.code, _detail(exc.value)["problems"][0][field]) == (_UNPROCESSABLE, where)
 
 
 def test_adopt_draft_loads_the_target_into_a_draft_and_warns_instead_of_refusing(api, sources_root):
@@ -5308,6 +5441,32 @@ def test_promoting_rechecks_against_the_schema_as_it_is_now(api, sources_root, r
     assert (detail["uid"], detail["problems"][0]["path"]) == (entry["uid"], "count")
     assert detail["file"] == entry["source"]
     assert pathlib.Path(entry["target"]).read_bytes() == b"count: 3\n"
+    _clear_drafts(api)
+
+
+def test_one_draft_failing_at_promotion_leaves_the_other_target_and_the_records_as_they_were(
+    api, sources_root, repo
+):
+    # v0.3.0 檢查點 1「任一份驗證失敗時整批不進版」（#353）：兩份草稿、其中一份的參數在進版時
+    # 沒過驗證 → 另一份的目標沒有寫出，也沒有產生任何變更紀錄（HEAD 不動）。上一則只有一份草稿、
+    # 只看目標。
+    if os.environ.get("CM_SYSTEM_BASE_URL"):
+        pytest.skip("需就地改 config-repo 裡的 schema 檔")
+    _clear_drafts(api)
+    failing = _with_schema(api, sources_root, "layer2_batch_fail.yaml")
+    passing = _onboard(api, sources_root, "layer2_batch_pass.yaml", b"speed: 1.5\n")
+    _post(api, "/api/drafts", {"uid": passing["uid"], "edits": {"speed": 2.5}})
+    _post(api, "/api/drafts", {"uid": failing["uid"], "edits": {"count": 9}})
+    schema_file = pathlib.Path(repo) / failing["schema"]
+    schema = json.loads(schema_file.read_text(encoding="utf-8"))
+    schema["properties"]["count"]["maximum"] = 5
+    schema_file.write_text(json.dumps(schema), encoding="utf-8")
+    before = _head(repo)
+
+    with pytest.raises(urllib.error.HTTPError):
+        _post(api, "/api/promote", {})
+
+    assert (_head(repo), pathlib.Path(passing["target"]).read_bytes()) == (before, b"speed: 1.5\n")
     _clear_drafts(api)
 
 
