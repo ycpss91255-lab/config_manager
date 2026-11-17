@@ -154,17 +154,11 @@ title = '納管與白名單'
 number = 1
 text = '能從介面納管至少三種格式的真實 config；納管後來源檔案與原始檔案逐位元組相同；正確記錄原始 owner／group／mode；hostname 自動填入且寫進檔案，重跑不因環境改變而變動'
 # 「真實 config」指磁碟上的真檔案經真的後端納管；規格的內容是人造的（維護者 11/17 在 #353 同意註明）。
-# 「重跑不因環境改變而變動」：hostname 由 CM_HOSTNAME 給定時與環境無關（#178），而且納管後寫進檔案、
-# 之後永不再讀（不變式 8）。
-specs = [
-  'test/pytest/system/test_web.py::test_onboarding_a_config_of_each_format_shows_it_in_the_list',
-  'test/pytest/integration/test_onboard.py::test_onboarded_source_is_byte_identical_in_the_repo',
-  'test/pytest/integration/test_onboard.py::test_permissions_record_the_original_mode',
-  'test/pytest/integration/test_onboard.py::test_the_config_list_records_the_original_owner_and_group',
-  'test/pytest/integration/test_onboard.py::test_the_config_list_records_the_hostname_read_at_onboarding',
-  'test/pytest/integration/test_source.py::test_cm_hostname_overrides_and_is_stable_across_environments',
-  'test/pytest/integration/test_onboard.py::test_a_later_hostname_change_leaves_an_onboarded_entry_as_recorded',
-]
+specs = []
+uncovered = '''待維護者決定（#353，11/17）：「重跑不因環境改變而變動」靠 CM_HOSTNAME 提供穩定的 hostname（#178、
+TEST-PLAN T22），但 #178 沒有明確取代 PRD 不變式 8 的「命名的分歧…絕不來自環境變數」。決定之前這條不算通過。
+其餘子句已有規格：三種格式從介面納管、來源逐位元組相同、原始 owner／group／mode 寫進清單檔、hostname 寫進
+清單檔、納管後換了環境已存的 hostname 不變（test_onboard.py 新增的三則）。'''
 
 [[milestone.checkpoint]]
 number = 2
@@ -197,13 +191,18 @@ specs = [
 [[milestone.checkpoint]]
 number = 4
 text = '以 ../、符號連結兩種方式嘗試逃逸白名單皆被攔截'
-# 單純的 ../ 由白名單的判定（T4，納管與瀏覽都經過它）擋；加入白名單的前綴含 .. 也被拒。
+# 兩種對象都驗（維護者 11/17 在 #353）：納管與瀏覽的路徑（`../` 與指向白名單外的符號連結），以及
+# 加入白名單的前綴（含 `..`，或 `..` 藏在連結迴圈裡；指向別處的連結前綴以 realpath 存下）。
 specs = [
   'test/pytest/unit/test_whitelist.py::test_dotdot_escaping_the_whitelist_is_denied',
-  'test/pytest/integration/test_allowed_roots_io.py::test_a_prefix_with_dotdot_is_refused',
+  'test/pytest/system/test_api.py::test_a_plain_dotdot_path_out_of_the_whitelist_is_refused',
   'test/pytest/integration/test_source.py::test_symlink_pointing_outside_the_whitelist_is_refused',
   'test/pytest/system/test_api.py::test_browse_a_symlink_that_escapes_the_whitelist_is_refused',
   'test/pytest/system/test_api.py::test_a_whitelisted_symlink_to_a_file_outside_is_refused',
+  'test/pytest/integration/test_allowed_roots_io.py::test_a_prefix_with_dotdot_is_refused',
+  'test/pytest/system/test_web.py::test_a_prefix_with_dotdot_is_not_added_to_the_whitelist',
+  'test/pytest/system/test_api.py::test_adding_a_prefix_hidden_behind_a_symlink_loop_is_refused',
+  'test/pytest/integration/test_allowed_roots_io.py::test_a_symlinked_prefix_is_stored_as_its_realpath',
 ]
 
 # ── v0.3.0 參數編輯與進版 ──────────────────────────────────────────────────
@@ -280,13 +279,17 @@ title = '歷史與退版'
 [[milestone.checkpoint]]
 number = 1
 text = '連續修改同一 config 三次後可退回第一版；退版後歷史仍可見全部四筆紀錄，歷史未被截斷；以 cfg 類型過濾時退版紀錄不出現；目標內容確實回到第一版'
-# 「第一版」是納管時的那一版，「四筆紀錄」是納管＋三次修改。「以 cfg 類型過濾」指歷史的 cfg 類型篩選
-# （`?prefix=cfg`）；頁面的「只看內容變更」刻意把退版也列進來（F11，10/31 定案 E1），不是這一條。
+# 「第一版」原文沒有定義：納管那一版與第一次修改那一版（U26「選第一次修改的版本」）各驗一次、分開命名
+# （維護者 11/17 在 #353）。「四筆紀錄」是納管＋三次修改。「以 cfg 類型過濾」是歷史的 cfg 類型篩選
+# （API 的 `?prefix=cfg`、T7）；頁面的「只看內容變更」是另一個篩選，依 10/31 定案 E1 會列出退版，
+# 不在這一條（維護者 11/17：兩個篩選不混為一談）。§8.2 這一句沒有指定要在頁面上操作。
 specs = [
-  'test/pytest/system/test_web.py::test_reverting_from_history_puts_the_target_back_to_the_first_version',
+  'test/pytest/system/test_web.py::test_reverting_from_history_puts_the_target_back_to_the_onboarded_version',
+  'test/pytest/system/test_web.py::test_reverting_from_history_puts_the_target_back_to_the_first_change',
   'test/pytest/system/test_api.py::test_revert_writes_the_old_content_back_as_a_new_record_without_rewriting_history',
-  'test/pytest/system/test_api.py::test_after_three_changes_and_a_revert_every_earlier_record_is_still_listed',
+  'test/pytest/system/test_api.py::test_after_three_changes_a_revert_restores_that_version_and_keeps_every_earlier_record',
   'test/pytest/system/test_api.py::test_filtering_the_history_by_the_cfg_kind_leaves_the_revert_out',
+  'test/pytest/integration/test_git.py::test_history_filtered_by_cfg_leaves_a_revert_out',
 ]
 
 [[milestone.checkpoint]]
@@ -307,9 +310,10 @@ title = '偏離偵測與處置'
 [[milestone.checkpoint]]
 number = 1
 text = '以 vim 直接修改一個已納管的目標檔案，掃描後判定為偏離且差異內容正確；執行覆蓋後回到一致；另一份執行納入後來源更新且產生 adopt 紀錄；刪除一個目標後判定為未部署且可修復'
-# 「以 vim 直接修改」以規格在介面外直接改寫目標檔為自動化等價（原地寫入；判定只比內容）。
+# 「以 vim 直接修改」用測試映像裡真的 vim（vim.tiny，不讀設定檔）在介面外改目標檔，不以直接寫檔代替
+# （維護者 11/17 在 #353）。
 specs = [
-  'test/pytest/system/test_web.py::test_editing_a_target_behind_the_interface_shows_the_right_diff',
+  'test/pytest/system/test_web.py::test_editing_a_target_with_vim_shows_the_right_diff',
   'test/pytest/system/test_web.py::test_the_diff_view_compares_source_and_target_side_by_side_per_parameter',
   'test/pytest/system/test_web.py::test_overwrite_from_the_diff_view_puts_the_source_back_and_returns_to_in_sync',
   'test/pytest/system/test_web.py::test_adopt_from_the_diff_view_updates_the_source_and_records_an_adoption',
@@ -367,8 +371,8 @@ title = '樹、搜尋與編輯鎖'
 [[milestone.checkpoint]]
 number = 1
 text = '左側樹依 hostname 與群組正確分層，父節點彙總最嚴重狀態；雙擊展開參數，可同時展開三個以上 config 並各自儲存；搜尋 max_vel 能列出所有含該參數的 config 並在展開時定位到該列；搜尋 0.55 能找到值符合的參數'
-# 「展開時定位到該列」指那一列被標示（data-hit），不斷言捲動位置（ADR-00000019 不斷言版面；
-# 維護者 11/17 在 #353 同意註明）。
+# 「展開時定位到該列」：那一列被標示，而且真的進入可見範圍——以一份長到需要捲動的 config 驗
+# （維護者 11/17 在 #353：只有標示不夠）。
 specs = [
   'test/pytest/system/test_web.py::test_switching_to_host_layout_puts_hostname_first_then_groups',
   'test/pytest/system/test_web.py::test_group_nodes_roll_up_the_most_severe_state_of_their_children',
@@ -379,6 +383,7 @@ specs = [
   'test/pytest/system/test_web.py::test_saving_one_expanded_config_leaves_another_edited_one_unsaved',
   'test/pytest/system/test_web.py::test_searching_a_parameter_name_lists_the_configs_that_have_it_and_locates_the_row',
   'test/pytest/system/test_web.py::test_searching_a_parameter_name_lists_every_config_that_has_it',
+  'test/pytest/system/test_web.py::test_expanding_a_search_hit_brings_the_matching_row_into_view',
   'test/pytest/system/test_web.py::test_searching_a_value_finds_the_parameter_holding_it',
   'test/pytest/unit/test_index.py::test_parameter_value_scope_returns_the_matching_parameters',
 ]
@@ -386,12 +391,12 @@ specs = [
 [[milestone.checkpoint]]
 number = 2
 text = '開第二個分頁時顯示唯讀並指名持有者與開始時間；持有者關閉分頁後第二個分頁可取得編輯權；異常中斷後階段於逾時內自動釋放'
-# 「持有者關閉分頁」以對持有者頁面送出 pagehide（頁面關閉時送釋放的那個事件）模擬。
+# 「持有者關閉分頁」：規格真的關閉持有者的分頁，不以送出 pagehide 事件代替（維護者 11/17 在 #353）。
 specs = [
   'test/pytest/system/test_web.py::test_a_second_tab_is_read_only_and_names_the_holder',
   'test/pytest/system/test_web.py::test_the_read_only_banner_shows_when_the_holder_started_editing',
   'test/pytest/system/test_api.py::test_the_editing_session_can_be_acquired_once_and_names_the_holder_to_the_second',
-  'test/pytest/system/test_web.py::test_when_the_holder_leaves_the_next_person_can_edit',
+  'test/pytest/system/test_web.py::test_when_the_holder_closes_the_tab_the_next_person_can_edit',
   'test/pytest/unit/test_session.py::test_a_session_whose_renewals_stop_is_swept_even_when_no_timeout_was_configured',
   'test/pytest/system/test_api.py::test_an_abandoned_session_is_released_once_its_renewals_stop',
   'test/pytest/system/test_api.py::test_a_renew_timeout_recycles_the_session_but_keeps_the_drafts_for_the_next_holder',
@@ -454,10 +459,13 @@ specs = [
 [[milestone.checkpoint]]
 number = 2
 text = '陣列可從介面增刪元素並調整順序；巢狀物件以可折疊區塊呈現且縮排由系統產生'
-# 「縮排由系統產生」：使用者不打縮排，寫出檔的縮排由系統產生；畫面上的縮排不斷言（ADR-00000019）。
+# 「縮排由系統產生」：畫面上的子列縮排（量畫出來的字的位置，`data-depth` 不算證據）與寫出檔的縮排
+# 分別驗（維護者 11/17 在 #353）。
 specs = [
   'test/pytest/system/test_web.py::test_list_elements_can_be_reordered_edited_added_and_removed_then_saved',
   'test/pytest/system/test_web.py::test_nested_parameters_render_as_a_collapsible_block_not_a_dotted_name',
+  'test/pytest/system/test_web.py::test_a_nested_parameter_is_drawn_indented_under_its_parent',
+  'test/pytest/system/test_web.py::test_editing_a_nested_parameter_writes_the_file_with_the_systems_indentation',
   'test/pytest/system/test_web.py::test_a_list_of_objects_can_be_reordered_and_its_fields_edited',
   'test/pytest/system/test_web.py::test_a_list_inside_a_list_element_can_be_reordered_added_to_and_removed_from',
   'test/pytest/unit/test_parse.py::test_setting_a_nested_yaml_value_by_dotted_path_and_list_index',
@@ -466,11 +474,11 @@ specs = [
 [[milestone.checkpoint]]
 number = 3
 text = '型別未知的項目退回文字區塊並明確標示為未結構化編輯'
-# 型別未知＝null 與空清單的元素（doc/UI-ELEMENTS.md）；兩種在頁面上各驗一次。
-specs = [
-  'test/pytest/system/test_web.py::test_a_value_without_a_type_is_editable_as_text_and_marked_unstructured',
-  'test/pytest/system/test_web.py::test_an_element_added_to_an_empty_list_is_edited_as_text_and_marked_unstructured',
-]
+specs = []
+uncovered = '''有缺陷，待維護者決定處理方式（#353，11/17）：型別未知的值退回的是單行輸入框，值裡有換行時，改過
+之後換行變成空格（規格存在 #353 的證據資料夾，紅燈）。原文附錄 C.2 只說 textarea「已足夠」，不是必須；
+但退回的文字區塊要能操作多行內容（維護者 11/17）。其餘已有規格：null、空清單的元素、型別混雜的清單元素、
+日期都退回文字並標「未結構化編輯」（T12 的種類）。'''
 
 # ── v0.9.0 部署模式與 UX ──────────────────────────────────────────────────
 
