@@ -11,7 +11,13 @@ from config_manager.core import roles
 from config_manager.core.errors import UnknownAction
 
 _EVERYONE = (roles.EDIT_VALUES, roles.REVERT, roles.HANDLE_DRIFT, roles.ONBOARD)
-_DEVELOPER_ONLY = (roles.SPECIFY_TYPES, roles.MAINTAIN_ROOTS, roles.EDIT_ATTRIBUTES)
+_DEVELOPER_ONLY = (
+    roles.SPECIFY_TYPES,
+    roles.MAINTAIN_ROOTS,
+    roles.EDIT_ATTRIBUTES,
+    # 確認或修改新納管預設主機名稱（#385，維護者 11/17：只有開發者角色能確認與修改）
+    roles.MAINTAIN_HOST_NAME,
+)
 
 
 @pytest.mark.parametrize("action", _EVERYONE)
@@ -20,7 +26,7 @@ def test_a_user_may_edit_values_revert_handle_drift_and_onboard_within_roots(act
 
 
 @pytest.mark.parametrize("action", _DEVELOPER_ONLY)
-def test_a_user_may_not_change_types_maintain_roots_or_edit_attributes(action):
+def test_a_user_may_not_change_types_maintain_roots_edit_attributes_or_set_the_host_name(action):
     assert roles.permits(roles.USER, action) is False
 
 
@@ -30,7 +36,7 @@ def test_a_developer_may_do_everything(action):
 
 
 def test_the_table_covers_every_action_exactly_once():
-    # 七個動作、兩邊各自不重複：少列一個動作的話，端點就會對著一個表上沒有的代號問權限。
+    # 八個動作、兩邊各自不重複：少列一個動作的話，端點就會對著一個表上沒有的代號問權限。
     assert sorted(roles.ACTIONS) == sorted(_EVERYONE + _DEVELOPER_ONLY)
 
 

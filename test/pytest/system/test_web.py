@@ -70,6 +70,9 @@ _EMAIL = "ming@example.com"
 _LIST_HEADER = """\
 list_version = 1
 
+[defaults]
+hostname = "amr01"
+
 [defaults.permissions]
 owner = "root"
 group = "root"
