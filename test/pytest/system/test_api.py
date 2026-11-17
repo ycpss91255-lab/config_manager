@@ -4197,6 +4197,7 @@ _WRITES = [
     ("POST", "/api/configs/zzzzzzz9/schema", None),
     ("POST", "/api/configs/zzzzzzz9/types", {"path": "x", "type": "int"}),
     ("POST", "/api/configs/zzzzzzz9/attributes", {"name": "x", "hostname": "h"}),
+    ("PUT", "/api/host-name", {"hostname": "amr09"}),
 ]
 _WRITE_ROUTES = {
     ("POST", "/api/configs"), ("DELETE", "/api/configs/{uid}"),
@@ -4205,7 +4206,7 @@ _WRITE_ROUTES = {
     ("POST", "/api/promote"), ("POST", "/api/configs/{uid}/revert"),
     ("POST", "/api/configs/{uid}/resolve"), ("POST", "/api/configs/{uid}/apply"),
     ("POST", "/api/configs/{uid}/schema"), ("POST", "/api/configs/{uid}/types"),
-    ("POST", "/api/configs/{uid}/attributes"),
+    ("POST", "/api/configs/{uid}/attributes"), ("PUT", "/api/host-name"),
 }
 # 不寫入的 POST、編輯階段自己的端點：不看識別碼。
 _NOT_WRITE_ROUTES = {
