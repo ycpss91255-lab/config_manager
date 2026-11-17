@@ -3499,7 +3499,9 @@ def test_a_refused_schema_draft_shows_the_reason_in_the_panel(open_page, repo):
     listing = repo / "config-list.toml"
     listing.write_text(
         listing.read_text(encoding="utf-8").replace(
-            'hostname = "amr01"\n', 'hostname = "amr01"\nschema = ".schemas/elsewhere.json"\n'
+            # 只對條目那一行：[defaults] 也有一行 hostname（#385），後面接的是空行不是 source。
+            'hostname = "amr01"\nsource',
+            'hostname = "amr01"\nschema = ".schemas/elsewhere.json"\nsource',
         ),
         encoding="utf-8",
     )
@@ -3558,8 +3560,9 @@ def _listing_with_schema(
     listing = repo / "config-list.toml"
     listing.write_text(
         listing.read_text(encoding="utf-8").replace(
-            'hostname = "amr01"\n',
-            f'hostname = "amr01"\nschema = ".schemas/{_PARAM_UID}.json"\n',
+            # 只對條目那一行：[defaults] 也有一行 hostname（#385），後面接的是空行不是 source。
+            'hostname = "amr01"\nsource',
+            f'hostname = "amr01"\nschema = ".schemas/{_PARAM_UID}.json"\nsource',
         ),
         encoding="utf-8",
     )

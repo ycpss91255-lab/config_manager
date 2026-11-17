@@ -21,8 +21,12 @@ from config_manager.io.onboard import OnboardRequest, onboard
 from config_manager.io.preflight import CONFIG_LIST_NAME
 
 _AUTHOR = "陳小明 <ming@example.com>"
+# 已保存新納管預設主機名稱（#385）：這組規格的前置是先納管一份，納管要它。
 _SEED = """\
 list_version = 1
+
+[defaults]
+hostname = "amr01"
 
 [defaults.permissions]
 owner = "root"
