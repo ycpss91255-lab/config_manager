@@ -59,6 +59,7 @@ figures/w*.svg   →   HTML 元素   →   測試選取器
 | 檢查差異 | 文字「檢查差異」（`data-testid="rescan"`） | 觸發全項目掃描；檢查期間停用。**（F34）從按下起 15 秒內（讀清單與搜尋框有字時的重跑搜尋合計，讀完並解析為止）沒有讀完就結束等待：按鈕回「檢查差異」可再按，樹上是讀不到清單「「讀取 config 清單」等了 15 秒沒有收到回應…」，摘要列檢查失敗，「退出」依 F3 的規則恢復；逾時那一次晚到的回應不蓋掉之後那一次** |
 | 檢查結果 | `data-testid="scan-status"` | 手動「檢查差異」的回饋，`data-state` 為 `running`（檢查中…）／`done`（時間、共幾份、全部一致或各有幾份偏離／未部署／判不出狀態）／`failed`（讀不到清單）。開頁面時的自動載入不顯示。**摘要跟著清單走**：按過「檢查差異」之後，任何讓清單重新載入的動作（寫出修復、進版、捨棄、處置偏離、退版、解除納管、納管、改屬性）完成時，摘要一起改寫成現在的份數與結果、時間更新；重新載入失敗就變成 `failed`——不會留著一句與樹上狀態矛盾的舊摘要。還沒按過「檢查差異」時，這些動作不會讓摘要憑空出現 |
 | 白名單 | 文字「白名單」 | **僅開發者出現**（非停用） |
+| 設定 | 文字「設定」（`data-testid="open-settings"`） | 開啟 W10 全域設定（#385）。**兩種角色都有**、唯讀的分頁也有（不是 `.editing-only`）：查看不需要編輯權；確認與修改在 W10 裡限開發者 |
 | 納管 | 文字「納管」 | 開啟納管流程 |
 | 進版 | `data-testid="promote-all"` | 文字含待進版草稿數，如「進版 (2)」。無草稿時停用。**這批草稿的參與者含別人時先經 W6**（ADR-00000032：標題「進版？這批含別人存的草稿」、內文說紀錄作者會是你、逐人列參與份數與不重複總數；確認後帶 `expected` 簽章送出，409 `drafts_changed` 重開確認）；全是自己的直接送。`POST /api/promote`；成功→`promote-done` 橫幅、草稿清空、重掃；失敗→`promote-error` 橫幅原樣列結構化錯誤（哪一份／哪些行號與建議）並打開那份（#22） |
 | 捨棄變更（全域） | `data-testid="discard-all"` | 文字「捨棄變更」；無草稿時停用；經 W6 確認對話框後 `DELETE /api/drafts`（#22） |
@@ -311,7 +312,8 @@ figures/w*.svg   →   HTML 元素   →   測試選取器
 | 確認 view | `data-testid="onboard-confirm"` | 整頁容器；開啟時隱藏瀏覽 |
 | 來源路徑 | `data-testid="onboard-path"` | 承載選定的來源路徑（`source_path`），送給 inspect／configs |
 | 格式選擇 | `data-testid="onboard-format"` | 下拉（yaml／json／toml／ini／raw）；預填副檔名的**建議**、使用者可改，改則重新偵測（不變式 8：副檔名不是持續權威） |
-| hostname 預覽 | `data-testid="onboard-hostname"` | 「將以 hostname＝<X> 納管」——inspect 回應帶的、納管當下會寫進條目的機器身分（AC5 核對） |
+| hostname 預覽 | `data-testid="onboard-hostname"` | 「將以 hostname＝<X> 納管」——inspect 回應帶的、納管當下會寫進條目的機器身分（AC5 核對）；#385 起 X 是清單檔已保存的新納管預設主機名稱。**還沒保存時**（inspect 回 `hostname: null`）改顯示 inspect 的 `hostname_problem`，帶 `data-missing="true"`，「確認寫入」一律停用（後端也擋） |
+| 到設定 | 文字「到設定」（`data-testid="onboard-hostname-settings"`） | 只在還沒保存新納管預設主機名稱時出現；按下開啟 W10（#385） |
 | 權限 | `data-testid="onboard-permissions"` | 原始 owner:group mode |
 | 摘要 | `data-testid="onboard-summary"` | 偵測到幾個欄位；`raw` 顯示「只版控、不解析」，不顯示「0 個欄位」這種假訊號 |
 | 型別樹 | `data-testid="onboard-types"` | 可折疊樹：容器（dict／list）為可折疊節點、葉為葉；顯示每個值的解析型別供確認（AC3） |
@@ -327,7 +329,34 @@ figures/w*.svg   →   HTML 元素   →   測試選取器
 以 `data-type` 呈現（AC3）；納管成功後新條目出現在 W2 左側樹（名字由目標路徑推導）。
 
 **hostname 只顯示、不由前端送**：`POST /api/configs` 不收 hostname，後端納管當下自行決定並凍結
-（不變式 8、ADR-00000012）；確認畫面顯示的值來自 inspect 回應，供人核對而已。
+（不變式 8、ADR-00000012）；確認畫面顯示的值來自 inspect 回應，供人核對而已。#385 起後端用的是
+清單檔已保存的 `[defaults] hostname`（ADR-00000033），還沒保存就拒絕納管。
+
+---
+
+## W10 設定
+
+全域設定（#385、ADR-00000033），目前只有「新納管預設主機名稱」。獨立整頁 view，從 W2 工具列的
+「設定」開啟；不放在某份 config 的編輯頁。消費 `GET`／`PUT /api/host-name`。
+
+| 元素 | 選取器 | 行為 |
+|---|---|---|
+| 設定 view | `data-testid="settings"` | 整頁容器；開啟時隱藏其他 view |
+| 返回 | `data-testid="settings-back"` | 回 W2 清單 |
+| 區塊 | `data-testid="host-name"` | 標題「新納管預設主機名稱」 |
+| 用途 | `data-testid="host-name-scope"` | 「只用於之後新納管的 config，納管時寫進那一筆；不修改已納管項目的 hostname。」 |
+| 保存的值 | `data-testid="host-name-saved"` | 「保存的納管預設名稱：<X>」；沒保存時說還沒保存、納管前要先確認或輸入。**不稱它是目前主機的實際名稱**——備份還原到另一台時它會跟著走 |
+| 本次啟動的候選 | `data-testid="host-name-candidate"` | 有有效候選時：「本次啟動取得的候選：<X>（不保證是即時的主機名稱）」；沒有時隱藏 |
+| 尚未確認 | `data-testid="host-name-unconfirmed"` | 沒有有效候選時：「目前主機名稱尚未確認：<原因>」——原因只寫服務實際知道的那一種（沒有收到本次啟動的候選並指向啟動工具的輸出、啟動工具記下的取不到原因、內容哪裡不合法） |
+| 名稱來源 | `data-testid="host-name-sources"`，項目 `host-name-source-candidate`／`host-name-source-entries` | 兩個來源都有時列出：「本次啟動取得的候選：<X>」「既有條目都使用：<Y>」；不一致時加一句不會自動選一個、不預填 |
+| 名稱輸入 | `data-testid="host-name-input"` | 預填：只有一個名稱時預填它，否則預填保存的值；一般使用者停用 |
+| 保存 | 文字「保存」（`data-testid="host-name-save"`，`.editing-only`） | **僅開發者出現**，且要持有編輯權；`PUT /api/host-name`，成功顯示 `host-name-done`（寫明已納管項目的 hostname 沒有改），失敗在 `host-name-error` 原樣顯示（不安全的名稱 422、角色不足 403、沒有編輯權 409／410） |
+| 唯讀說明 | `data-testid="host-name-readonly"` | 一般使用者看到：只有開發者能確認或修改、一般使用者只能查看 |
+| 角色說明 | `data-testid="host-name-role-note"` | 「開發者角色是自我宣告，不是帳號認證。」兩種角色都看得到 |
+
+**測試須斷言**：一般使用者看得到保存的值與候選、看不到「保存」；候選標示「不保證是即時的主機名稱」；
+沒有候選時寫「目前主機名稱尚未確認」與原因；兩個來源不一致時都列出、不預填；開發者保存後重新
+載入仍是新值，既有條目的 hostname 不變。
 
 ---
 

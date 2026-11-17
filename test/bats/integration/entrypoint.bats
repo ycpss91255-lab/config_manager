@@ -236,6 +236,28 @@ sys.exit(0 if [r.prefix for r in allowed.roots] == ['${WORK}/targets'] else 1)
   [ "$(git -C "${WORK}" rev-parse --git-dir)" = "${before}" ]
 }
 
+@test "容器環境裡有舊的 CM_HOSTNAME 時啟動失敗，指出如何移除並寫明順序（#385）" {
+  # 名字改由清單檔明確保存的 [defaults] hostname 決定；舊變數留著會讓人以為它還在起作用。
+  # repo 本身是合法的——擋下它的只有那個變數。
+  git init --quiet --initial-branch=main "${WORK}"
+  write_minimal_list "${WORK}"
+
+  CM_CONFIG_REPO="${WORK}" CM_HOSTNAME=amr01 run "${ENTRYPOINT}" true
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"CM_HOSTNAME"* ]]
+  [[ "${output}" == *"1. 移除舊變數"*"2. 重新啟動服務"*"3. 到介面"* ]]
+}
+
+@test "容器環境裡的 CM_HOSTNAME 是空值也算殘留，啟動失敗（#385）" {
+  # 舊的 compose.yaml 會傳一個空的 CM_HOSTNAME 進容器——那正是要清掉的舊接線。
+  git init --quiet --initial-branch=main "${WORK}"
+  write_minimal_list "${WORK}"
+
+  CM_CONFIG_REPO="${WORK}" CM_HOSTNAME= run "${ENTRYPOINT}" true
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"CM_HOSTNAME"* ]]
+}
+
 @test "repo 已存在但清單檔不見時失敗，原因指名該路徑" {
   # 這不是首次啟動——首次啟動時已經種下了。所以是有人刪了它，或掛錯路徑。
   git init --quiet --initial-branch=main "${WORK}"

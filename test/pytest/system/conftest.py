@@ -17,6 +17,7 @@
 保真度。只在其中一種環境會壞的缺陷，正是跑兩次才抓得到而跑一次抓不到的。
 """
 
+import contextlib
 import gc
 import os
 import pathlib
@@ -44,8 +45,13 @@ class LoggingApi(NamedTuple):
     lines: list[str]
 
 
+# 共用的設定庫已保存新納管預設主機名稱（#385）：納管要它。沒保存時的行為由 `host_name_service`
+# 那一組自己的設定庫觀察。
 _MINIMAL_LIST = """\
 list_version = 1
+
+[defaults]
+hostname = "amr01"
 
 [defaults.permissions]
 owner = "root"
@@ -104,6 +110,9 @@ def repo(tmp_path_factory):
     """config-repo。對著建好的映像跑時，用映像裡那一份。"""
     external = os.environ.get("CM_SYSTEM_CONFIG_REPO")
     if external:
+        # 映像那份是 entrypoint 種的，還沒保存新納管預設主機名稱；換成與就地那份同一個起點（#385）。
+        (pathlib.Path(external) / "config-list.toml").write_text(_MINIMAL_LIST, encoding="utf-8")
+        _commit_all(external, "chore: 保存新納管預設主機名稱")
         return external
 
     path = tmp_path_factory.mktemp("config-repo")
@@ -181,6 +190,77 @@ def listing(repo):
         (root / "config-list.toml").write_text(_MINIMAL_LIST + entries, encoding="utf-8")
 
     return _write
+
+
+def _commit_all(repo, message):
+    subprocess.run(["git", "-C", repo, "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", repo, "-c", "user.name=seed", "-c", "user.email=s@e.x",
+         "commit", "-q", "-m", message],
+        check=True,
+    )
+
+
+@contextlib.contextmanager
+def _serving(app):
+    """在背景起 `app`、等它答話，回它的位址；離開時收掉。"""
+    port = _free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        _wait_until_answering(base)
+        yield base
+    finally:
+        server.should_exit = True
+        thread.join(timeout=_STARTUP_TIMEOUT)
+
+
+class HostNameService(NamedTuple):
+    """#385 的設定 API 規格用的服務：位址、它自己的設定庫與執行期目錄。"""
+
+    url: str
+    repo: pathlib.Path
+    runtime: pathlib.Path
+
+    def start_id(self) -> str:
+        """這個服務這次啟動發布的識別碼。"""
+        return (self.runtime / "start-id").read_text(encoding="utf-8").strip()
+
+    def another_start(self):
+        """同一份設定庫與執行期目錄上再起一次服務——服務的「下一次啟動」。"""
+        return _serving(create_app(str(self.repo), runtime_dir=str(self.runtime)))
+
+
+_SEED_WITHOUT_HOSTNAME = """\
+list_version = 1
+
+# 未個別指定時套用的預設權限
+[defaults.permissions]
+owner = "root"
+group = "root"
+mode = "0644"
+"""
+
+
+@pytest.fixture
+def host_name_service(tmp_path, sources_root):
+    """自己的設定庫（還沒保存新納管預設主機名稱）、自己的執行期目錄、自己起的服務（#385）。
+
+    兩個測試環境都就地起（比照 `api_alone`）：規格要在執行期目錄放候選、要改清單檔的
+    `[defaults]`、要比較兩次啟動，不能動 session 共用的那一份。
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "config-list.toml").write_text(_SEED_WITHOUT_HOSTNAME, encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    _commit_all(str(repo), "chore: 種下清單檔")
+    _seed_allowed_roots(str(repo), sources_root)
+    runtime = tmp_path / "run"
+    runtime.mkdir(mode=0o700)
+    with _serving(create_app(str(repo), runtime_dir=str(runtime))) as base:
+        yield HostNameService(base, repo, runtime)
 
 
 def _seed_allowed_roots(repo, root):

@@ -45,7 +45,9 @@ usage() {
 （加 compose.bridge.yaml）各一次。只在 Linux 上有意義，由 CI 執行。
 
 每一種網路模式驗：
-  本機連得到後端與前端；後端是部署模式
+  經 script/run.sh 起服務（與 just docker run 同一條路）；本機連得到後端與前端；後端是部署模式
+  主機名稱候選是 runner 的 hostname；重跑啟動工具不重啟服務、候選不變；docker restart 之後
+  尚未確認、上一次的候選檔被清掉，再跑啟動工具就取得；執行期目錄不在掛載清單裡（#385）
   主機的非 loopback 位址連不到兩個服務（先以一個故意綁 0.0.0.0 的對照服務證明那個位址連得到）
   容器的 PID 1 是服務本身；重啟策略是 unless-stopped
   容器整個移除再建之後：清單、已進版的值、歷史、白名單都在，草稿與身分不在
@@ -210,14 +212,18 @@ survives_recreation() {
   # 取得編輯權（F23）：之後的寫入都帶它。容器重建後是新的程序、只做讀取，不必釋放。
   EDITING="$(call POST /api/session/lock | json 'd["token"]')"
   call POST /api/allowed-roots "{\"prefix\":\"${extra}\"}" >/dev/null
+  # 新納管預設主機名稱（#385）：開發者確認本次啟動取得的候選，之後的納管才有名稱可用。
+  call PUT /api/host-name "{\"hostname\":\"$(hostname)\"}" >/dev/null
   local entry uid
   entry="$(call POST /api/configs "{\"source_path\":\"${target}\",\"format\":\"yaml\",\"ambiguity_note\":\"\"}")"
   uid="$(json 'd["uid"]' <<<"${entry}")"
+  [[ "$(json 'd["hostname"]' <<<"${entry}")" == "$(hostname)" ]] \
+    || fail "納管紀錄的 hostname 不是開發者確認的主機名稱 $(hostname)" "檢查 PUT /api/host-name 有沒有寫進清單檔的 [defaults]"
   if [[ "${MODE}" == "bridge" ]]; then
-    [[ "$(json 'd["hostname"]' <<<"${entry}")" == "${CM_HOSTNAME}" ]] \
-      || fail "納管紀錄的 hostname 不是 CM_HOSTNAME 給的 ${CM_HOSTNAME}" "檢查 compose.bridge.yaml 有沒有把 CM_HOSTNAME 帶進後端"
-    ok "納管紀錄的 hostname 是 CM_HOSTNAME 給的值，不是容器 ID"
+    [[ "$(json 'd["hostname"]' <<<"${entry}")" != "$(docker exec "${BACKEND}" hostname)" ]] \
+      || fail "bridge 下納管紀錄的 hostname 是容器自己的名稱" "候選應由 post-run hook 在主機上讀，不是容器裡"
   fi
+  ok "納管紀錄的 hostname 是確認過的主機名稱，不是容器 ID"
   call POST /api/drafts "{\"uid\":\"${uid}\",\"edits\":{\"max_vel\":1.2}}" >/dev/null
   call POST /api/promote '{}' >/dev/null
   call POST /api/drafts "{\"uid\":\"${uid}\",\"edits\":{\"max_vel\":1.5}}" >/dev/null
@@ -245,6 +251,72 @@ survives_recreation() {
   ok "容器整個移除再建之後：清單、已進版的值、歷史、白名單都在；未進版草稿與身分不在"
 }
 
+# 經啟動工具起服務（#385）：pre-run hook、docker compose up -d、post-run hook 全部走一次，與
+# `just docker run` 同一條路。輸出寫到紀錄檔，失敗時才印出來。
+launch() {
+  ./script/run.sh >"${WORK}/run.log" 2>&1 || {
+    cat "${WORK}/run.log" >&2
+    fail "script/run.sh 失敗" "看上面印出的 pre-run／post-run 訊息"
+  }
+}
+
+started_at() {
+  docker inspect --format '{{.State.StartedAt}}' "${BACKEND}"
+}
+
+candidate() {
+  call GET /api/host-name | json 'd["candidate"]'
+}
+
+# 主機名稱候選（#385）：post-run hook 在**主機**（runner）上讀 hostname、交給容器記下；同一次服務
+# 啟動已有候選時重跑不更新、也不重啟服務；服務自己重啟之後尚未確認，再跑啟動工具才取得。
+host_name_candidate() {
+  local expected before start_id view
+  expected="$(hostname)"
+  [[ "$(candidate)" == "${expected}" ]] \
+    || fail "設定 API 回報的本次啟動候選是「$(candidate)」，不是 runner 的 hostname ${expected}" "看 ${WORK}/run.log 裡 post-run 那幾行"
+  ok "經啟動工具起服務後，本次啟動取得的候選是 runner 的主機名稱（${expected}）"
+
+  before="$(started_at)"
+  start_id="$(docker exec "${BACKEND}" cat /run/config_manager/start-id)"
+  launch
+  [[ "$(started_at)" == "${before}" && "$(docker exec "${BACKEND}" cat /run/config_manager/start-id)" == "${start_id}" ]] \
+    || fail "重跑 script/run.sh 之後服務重啟了" "檢查 script/run.sh 有沒有加上會重建容器的參數"
+  [[ "$(candidate)" == "${expected}" ]] \
+    || fail "重跑 script/run.sh 之後候選變成「$(candidate)」" "同一次啟動已有候選時不該更新；檢查 io/host_candidate.record"
+  ok "重跑啟動工具：容器沿用、服務不重啟（啟動識別碼不變），候選不變"
+
+  docker restart "${BACKEND}" >/dev/null
+  wait_for "${API}/api/mode"
+  view="$(call GET /api/host-name)"
+  [[ "$(json 'd["candidate"] is None and "沒有收到本次啟動" in d["unconfirmed"]' <<<"${view}")" == "True" ]] \
+    || fail "docker restart 之後設定 API 仍回報「${view}」" "服務應以新的啟動識別碼判定；檢查 io/host_candidate.read_candidate"
+  docker exec "${BACKEND}" test ! -e /run/config_manager/host-candidate.json \
+    || fail "docker restart 之後上一次的候選檔還在" "檢查 script/entrypoint.sh 的 clear_runtime_dir"
+  ok "docker restart 之後回報目前主機名稱尚未確認，上一次的候選檔已被 entrypoint 清掉"
+
+  before="$(started_at)"
+  launch
+  [[ "$(candidate)" == "${expected}" && "$(started_at)" == "${before}" ]] \
+    || fail "重啟之後再跑 script/run.sh，候選是「$(candidate)」或服務又重啟了" "看 ${WORK}/run.log"
+  ok "再跑啟動工具就取得候選，服務不重啟"
+
+  [[ "$(docker inspect --format '{{range .Mounts}}{{.Destination}} {{end}}' "${BACKEND}")" != *"/run/config_manager"* ]] \
+    || fail "執行期目錄 /run/config_manager 出現在容器的掛載清單裡" "它要在容器自己的可寫層，檢查 compose 檔的 volumes／tmpfs"
+  ok "執行期目錄不在容器實際的掛載清單裡"
+
+  local modes
+  # 權限與擁有者在容器裡讀（容器裡的 Python），不用 stat 的旗標——GNU 與 BSD 的寫法不同。
+  modes="$(docker exec "${BACKEND}" python -c '
+import os, pwd, sys
+print("|".join(
+    f"{os.stat(p).st_mode & 0o777:o} {pwd.getpwuid(os.stat(p).st_uid).pw_name}" for p in sys.argv[1:]
+))' /run/config_manager /run/config_manager/start-id /run/config_manager/host-candidate.json)"
+  [[ "${modes}" == "700 user|600 user|600 user" ]] \
+    || fail "執行期目錄與裡面的檔是「${modes}」，預期 700／600 且由服務使用者 user 擁有" "檢查 Dockerfile 預建 /run/config_manager 的那一步與寫檔時的權限"
+  ok "執行期目錄由服務使用者擁有、0700，識別碼檔與候選檔 0600"
+}
+
 stops_in_time() {
   local started elapsed name code
   started="$(date +%s)"
@@ -264,9 +336,9 @@ exercise() {
   MODE="$1"
   export COMPOSE_FILE="$2"
   printf 'compose_smoke: ── %s 網路（%s）──\n' "${MODE}" "${COMPOSE_FILE}"
-  docker compose up --detach >/dev/null 2>&1 \
-    || fail "docker compose up 失敗" "直接跑 COMPOSE_FILE=${COMPOSE_FILE} docker compose up 看它印出的原因"
+  launch
   answers_locally
+  host_name_candidate
   only_local
   runs_as_pid_one
   survives_recreation
@@ -298,7 +370,8 @@ main() {
   trap cleanup EXIT
   export COMPOSE_PROJECT_NAME="cm_smoke_$$"
   export CM_TARGET_ROOT="${WORK}/targets"
-  export CM_HOSTNAME="smoke-host"
+  # 主機名稱不再由環境變數決定（#385）：留著舊的 CM_HOSTNAME，pre-run hook 會停下來。
+  unset CM_HOSTNAME
   # 目標根目錄要讓容器裡的服務使用者寫得進去；它的 uid 與 runner 的不同，所以整個放開。
   # 這是暫存目錄，結束時就刪。
   mkdir -p "${CM_TARGET_ROOT}" "${WORK}/control"

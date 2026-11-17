@@ -8,6 +8,7 @@ import pytest
 from config_manager.core.config_list import dump, load
 from config_manager.core.models import FileEntry, Permissions
 from config_manager.core.errors import (
+    ConfigListError,
     ConfigListMalformed,
     DumpMismatch,
     DuplicateSource,
@@ -1055,6 +1056,136 @@ groups   = []
 """
     with pytest.raises(DuplicateTarget):
         load(text)
+
+
+_SEED_WITH_ENTRY = """\
+list_version = 1
+
+# 未個別指定時套用的預設權限
+[defaults.permissions]
+owner = "root"
+group = "root"
+mode = "0644"
+
+[[files]]
+uid      = "mfz3k9q1"
+name     = "navigation-params"
+hostname = "amr01"
+source   = "files/amr01/nav2_params.yaml"
+target   = "/opt/robot/config/nav2_params.yaml"
+format   = "yaml"
+groups   = []
+"""
+
+_WITH_DEFAULT_HOSTNAME = """\
+list_version = 1
+
+[defaults]
+hostname = "amr01"   # 這台機器的納管預設名稱
+
+# 未個別指定時套用的預設權限
+[defaults.permissions]
+owner = "root"
+group = "root"
+mode = "0644"
+
+[[files]]
+uid      = "mfz3k9q1"
+name     = "navigation-params"
+hostname = "amr01"
+source   = "files/amr01/nav2_params.yaml"
+target   = "/opt/robot/config/nav2_params.yaml"
+format   = "yaml"
+groups   = []
+"""
+
+
+def test_the_default_hostname_for_new_onboarding_loads_from_the_defaults_table():
+    # #385：這台機器的納管預設名稱存在清單檔的 [defaults] hostname（維護者 11/17）。
+    assert load(_WITH_DEFAULT_HOSTNAME).defaults.hostname == "amr01"
+
+
+def test_a_list_file_without_a_default_hostname_loads_with_no_default_hostname():
+    # 首次啟動種下的清單檔沒有這個鍵：還沒設定是合法狀態（只擋需要名稱的納管，#385）。
+    assert load(_SEED_WITH_ENTRY).defaults.hostname is None
+
+
+def test_setting_the_default_hostname_where_there_was_none_adds_only_that_key():
+    # 由無變有：[defaults] 表頭與那一鍵出現在 [defaults.permissions]（連同它上方的註解）之前，
+    # 其餘逐位元組不變。期望值以獨立字面量寫下。
+    expected = _SEED_WITH_ENTRY.replace(
+        "# 未個別指定時套用的預設權限\n",
+        '[defaults]\nhostname = "amr01"\n\n# 未個別指定時套用的預設權限\n',
+    )
+
+    config_list = load(_SEED_WITH_ENTRY)
+    config_list.defaults.hostname = "amr01"
+
+    assert dump(config_list, _SEED_WITH_ENTRY) == expected
+
+
+def test_changing_the_default_hostname_rewrites_only_that_value():
+    # 改動既有的預設名稱：只換那個值，行內註解與其餘逐位元組不變；既有條目的 hostname 不跟著改
+    # （不變式 8：條目的身分只來自它自己那一筆）。
+    expected = _WITH_DEFAULT_HOSTNAME.replace(
+        'hostname = "amr01"   # 這台機器的納管預設名稱',
+        'hostname = "amr02"   # 這台機器的納管預設名稱',
+    )
+
+    config_list = load(_WITH_DEFAULT_HOSTNAME)
+    config_list.defaults.hostname = "amr02"
+
+    assert dump(config_list, _WITH_DEFAULT_HOSTNAME) == expected
+
+
+@pytest.mark.parametrize(
+    ("written", "value"),
+    [
+        ('"amr/01"', "amr/01"),
+        ('".."', ".."),
+        ('"amr 01"', "amr 01"),
+        ('"amr\\n01"', "amr\n01"),
+    ],
+)
+def test_an_unsafe_default_hostname_is_refused_on_load_naming_the_field(written, value):
+    # 它會成為新條目的 hostname、流進 files/<hostname>/ 的路徑與變更紀錄的主旨（不變式 2）。
+    text = _WITH_DEFAULT_HOSTNAME.replace(
+        'hostname = "amr01"   # 這台機器的納管預設名稱', f"hostname = {written}"
+    )
+
+    with pytest.raises(ConfigListError) as caught:
+        load(text)
+
+    message = str(caught.value)
+    assert ("[defaults] hostname" in message, value in message, "下一步" in message) == (
+        True,
+        True,
+        True,
+    )
+
+
+def test_an_unsafe_default_hostname_is_refused_before_writing():
+    # 寫出前的自我驗證也擋（#181 的同一條）：不產生任何輸出。
+    config_list = load(_SEED_WITH_ENTRY)
+    config_list.defaults.hostname = "amr/01"
+
+    with pytest.raises(ConfigListError, match=r"\[defaults\] hostname"):
+        dump(config_list, _SEED_WITH_ENTRY)
+
+
+def test_an_entry_without_a_hostname_is_refused_naming_its_uid_not_filled_from_defaults():
+    # 不變式 8：既有條目的身分只來自它自己那一筆；缺了是資料問題，不以 [defaults] hostname 補上。
+    text = _WITH_DEFAULT_HOSTNAME.replace('hostname = "amr01"\nsource', "source")
+
+    with pytest.raises(ConfigListError) as caught:
+        load(text)
+
+    message = str(caught.value)
+    assert ("mfz3k9q1" in message, "hostname" in message, "下一步" in message) == (
+        True,
+        True,
+        True,
+    )
 
 
 def test_a_hand_written_requires_privilege_false_survives_round_trip():

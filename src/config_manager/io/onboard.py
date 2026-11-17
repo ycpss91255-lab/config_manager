@@ -6,7 +6,8 @@
 確定不重複了，才開始寫**（#172）：
 
 1. `read_source`（T22）——白名單判定 + realpath + 讀原始位元組與權限（一次讀完）
-2. `local_hostname`（T22）——納管當下讀一次，寫進檔案後永不再讀（不變式 8）
+2. 清單檔的 `[defaults] hostname`（T1，#385）——新納管的預設主機名稱，寫進這一筆後永不再讀
+   （不變式 8）；還沒保存就丟 `DefaultHostnameMissing`，什麼都沒寫
 3. `derive_name` / `new_uid`（T5）——name 取自目標路徑最後兩層，uid 取自匯入時刻
 4. `source_relpath`（#186）——只算出來源檔在 repo 內的相對路徑，還不寫任何位元組
 5. `config_list.dump`（T1）——算出併入後的清單檔文字；它在產生輸出前先做完整性檢查
@@ -61,6 +62,7 @@ from config_manager.core.identity import derive_name, new_uid
 from config_manager.core.models import ConfigList, FileEntry, Permissions
 from config_manager.io.atomic import replace_atomically
 from config_manager.io.errors import (
+    DefaultHostnameMissing,
     OnboardLeftBehind,
     WriterError,
     failure_reason,
@@ -69,7 +71,7 @@ from config_manager.io.errors import (
 from config_manager.io.git import record, stage, unstage
 from config_manager.io.preflight import CONFIG_LIST_NAME
 from config_manager.io.repo import load_list, place_source, source_relpath, write_config_list
-from config_manager.io.source import local_hostname, read_source, service_identity
+from config_manager.io.source import read_source, service_identity
 
 
 @dataclass(frozen=True)
@@ -214,9 +216,18 @@ def onboard(repo: str, request: OnboardRequest, author: str) -> FileEntry:
     source = read_source(request.source_path, request.allowed_roots)
     target = source.resolved_path
 
-    # 2-3. 身分：hostname 讀一次，name 取自目標路徑，uid 取自匯入時刻。source 欄位是
-    #    來源檔在 repo 內的相對路徑，這裡只用 source_relpath 算出來、還不寫任何位元組。
-    hostname = local_hostname()
+    # 2-3. 身分：hostname 取自清單檔已保存的新納管預設主機名稱（#385），name 取自目標路徑，
+    #    uid 取自匯入時刻。source 欄位是來源檔在 repo 內的相對路徑，這裡只用 source_relpath
+    #    算出來、還不寫任何位元組。清單檔在這裡就載入：沒保存名稱時，repo 一個位元組都還沒動。
+    original_text, current = load_list(repo)
+    hostname = current.defaults.hostname
+    if hostname is None:
+        raise DefaultHostnameMissing(
+            f"{os.path.join(repo, CONFIG_LIST_NAME)} 的 [defaults] hostname 還沒保存"
+            "（新納管預設主機名稱），所以不能納管新 config；這次什麼都沒寫。"
+            "名字只來自明確保存的設定，不從環境變數或容器讀。"
+            "下一步：到「設定」的「新納管預設主機名稱」確認或輸入這台機器的名稱，再納管"
+        )
     uid = new_uid(datetime.datetime.now(datetime.UTC))
     name = derive_name(target)
     relative = source_relpath(hostname, target)
@@ -235,7 +246,6 @@ def onboard(repo: str, request: OnboardRequest, author: str) -> FileEntry:
     # 4. 先驗證再寫，此刻 repo 還沒動（#172 AC2）。兩步失敗映到不同狀態（#257）：
     #    (a) 載入既有清單失敗＝伺服器端資料損壞 → ConfigListUnparsable（結構化 500）；
     #    (b) dump 的完整性檢查對「新條目與既有衝突」丟 ConfigListError，屬輸入衝突、下游映 409。
-    original_text, current = load_list(repo)
     _refuse_if_managed(current, target)
     new_list_text = dump(
         current.model_copy(update={"files": [*current.files, entry]}),

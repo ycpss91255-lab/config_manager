@@ -53,6 +53,7 @@ from v8_coverage import line_coverage
 
 from config_manager.api.lock import LockBox
 from config_manager.api.routes import create_app
+from config_manager.core.config_list import load as load_config_list
 from config_manager.core import parse as core_parse
 from config_manager.io import drift as drift_io
 from config_manager.io import promote as promote_io
@@ -69,6 +70,9 @@ _EMAIL = "ming@example.com"
 
 _LIST_HEADER = """\
 list_version = 1
+
+[defaults]
+hostname = "amr01"
 
 [defaults.permissions]
 owner = "root"
@@ -169,11 +173,20 @@ def listing(repo):
 
 
 @pytest.fixture
-def api(repo, site):
+def runtime(tmp_path):
+    """服務的執行期目錄（#385）：啟動識別碼與主機名稱候選放在這裡。"""
+    path = tmp_path / "run"
+    path.mkdir(mode=0o700)
+    return path
+
+
+@pytest.fixture
+def api(repo, site, runtime):
     """真的 FastAPI 服務，只放行頁面所在的那個來源。"""
     port = _free_port()
     config = uvicorn.Config(
-        create_app(str(repo), (site,)), host="127.0.0.1", port=port, log_level="error"
+        create_app(str(repo), (site,), runtime_dir=str(runtime)),
+        host="127.0.0.1", port=port, log_level="error",
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -2311,6 +2324,147 @@ def test_the_confirm_screen_previews_the_hostname_and_permissions(open_page, bro
     assert page.inner_text("[data-testid='onboard-permissions']").strip()  # 權限有顯示
 
 
+# ── W10 設定：新納管預設主機名稱（#385）────────────────────────────────────────────
+
+
+def _open_settings_page(page):
+    page.get_by_role("button", name="設定").click()
+    page.wait_for_selector("[data-testid='settings']", state="visible")
+    page.wait_for_selector("[data-testid='host-name-saved']:not(:empty)")
+    return page
+
+
+def _record_this_starts_candidate(runtime, hostname):
+    start_id = (runtime / "start-id").read_text(encoding="utf-8").strip()
+    (runtime / "host-candidate.json").write_text(
+        json.dumps({"start_id": start_id, "hostname": hostname}), encoding="utf-8"
+    )
+
+
+def _text(page, testid):
+    return page.inner_text(f"[data-testid='{testid}']")
+
+
+def test_the_settings_page_shows_the_saved_default_hostname_and_that_it_renames_nothing(
+    open_page,
+):
+    page = _open_settings_page(_enter_identity(open_page()))
+
+    assert (
+        "保存的納管預設名稱：amr01" in _text(page, "host-name-saved"),
+        "不修改已納管項目的 hostname" in _text(page, "host-name-scope"),
+        "開發者角色是自我宣告" in _text(page, "host-name-role-note"),
+    ) == (True, True, True)
+
+
+def test_the_settings_page_offers_this_starts_candidate_without_calling_it_the_live_hostname(
+    open_page, runtime
+):
+    _record_this_starts_candidate(runtime, "amr07")
+
+    page = _open_settings_page(_enter_identity(open_page()))
+
+    text = _text(page, "host-name-candidate")
+    assert ("本次啟動取得的候選：amr07" in text, "不保證是即時的主機名稱" in text) == (True, True)
+
+
+def test_the_settings_page_says_the_hostname_is_not_confirmed_and_why(open_page):
+    page = _open_settings_page(_enter_identity(open_page()))
+
+    text = _text(page, "host-name-unconfirmed")
+    assert ("目前主機名稱尚未確認" in text, "啟動工具的輸出" in text) == (True, True)
+
+
+def test_the_settings_page_lists_both_disagreeing_sources_without_prefilling(
+    open_page, runtime, listing
+):
+    listing("a")
+    _record_this_starts_candidate(runtime, "amr07")
+
+    page = _open_settings_page(_enter_identity(open_page()))
+
+    assert (
+        _text(page, "host-name-source-candidate"),
+        _text(page, "host-name-source-entries"),
+        page.input_value("[data-testid='host-name-input']"),
+    ) == ("本次啟動取得的候選：amr07", "既有條目都使用：amr01", "amr01")
+
+
+def test_on_the_settings_page_a_user_can_only_view_the_default_hostname(open_page):
+    page = _open_settings_page(_enter_identity(open_page()))
+
+    assert (
+        page.is_visible("[data-testid='host-name-save']"),
+        page.is_disabled("[data-testid='host-name-input']"),
+        page.is_visible("[data-testid='host-name-readonly']"),
+    ) == (False, True, True)
+
+
+def test_on_the_settings_page_a_developer_saves_a_default_hostname_that_survives_a_reload(
+    open_page, runtime, listing, repo
+):
+    listing("a")
+    _record_this_starts_candidate(runtime, "amr07")
+    page = open_page()
+    page.click("[data-testid='role-toggle'] button[data-role='developer']")
+    _open_settings_page(_enter_identity(page))
+    page.fill("[data-testid='host-name-input']", "amr07")
+    page.click("[data-testid='host-name-save']")
+    page.wait_for_selector("[data-testid='host-name-done']", state="visible")
+
+    page.reload()
+    page.wait_for_selector("[data-testid='config-tree']", state="visible")
+    _open_settings_page(page)
+
+    entry = load_config_list((repo / "config-list.toml").read_text(encoding="utf-8")).files[0]
+    assert ("保存的納管預設名稱：amr07" in _text(page, "host-name-saved"), entry.hostname) == (
+        True,
+        "amr01",
+    )
+
+
+def _without_a_saved_default_hostname(repo):
+    text = (repo / "config-list.toml").read_text(encoding="utf-8")
+    (repo / "config-list.toml").write_text(
+        text.replace('[defaults]\nhostname = "amr01"\n\n', ""), encoding="utf-8"
+    )
+
+
+def _open_confirm_without_default_hostname(page, browse_root, name):
+    (browse_root / name).write_text("a: 1\n", encoding="utf-8")
+    _open_browser(page)
+    page.click(f"[data-testid='browse-root-{browse_root}']")
+    page.click(f"[data-testid='browse-entry-{name}']")
+    page.get_by_role("button", name="檢視並納管").click()
+    page.wait_for_selector("[data-testid='onboard-hostname'][data-missing='true']")
+    return page
+
+
+def test_without_a_saved_default_hostname_the_onboard_confirmation_cannot_be_written(
+    open_page, repo, browse_root
+):
+    _without_a_saved_default_hostname(repo)
+
+    page = _open_confirm_without_default_hostname(open_page(), browse_root, "nohost.yaml")
+
+    assert (
+        "新納管預設主機名稱" in _text(page, "onboard-hostname"),
+        page.is_visible("[data-testid='onboard-hostname-settings']"),
+        page.is_disabled("[data-testid='onboard-submit']"),
+    ) == (True, True, True)
+
+
+def test_without_a_saved_default_hostname_the_settings_entry_opens_the_settings_page(
+    open_page, repo, browse_root
+):
+    _without_a_saved_default_hostname(repo)
+    page = _open_confirm_without_default_hostname(open_page(), browse_root, "nohost2.yaml")
+
+    page.click("[data-testid='onboard-hostname-settings']")
+
+    assert page.is_visible("[data-testid='host-name']")
+
+
 def test_an_onboarded_entry_survives_a_reload(open_page, browse_root):
     # 納管後條目落盤：fresh page 重抓、伺服器每請求重掃 config-list.toml，reload 後仍在。
     # （hostname 本身「重開不因環境改變而變動」的凍結由 T22／test_api 的 API 測試守，不在這裡。）
@@ -3345,7 +3499,9 @@ def test_a_refused_schema_draft_shows_the_reason_in_the_panel(open_page, repo):
     listing = repo / "config-list.toml"
     listing.write_text(
         listing.read_text(encoding="utf-8").replace(
-            'hostname = "amr01"\n', 'hostname = "amr01"\nschema = ".schemas/elsewhere.json"\n'
+            # 只對條目那一行：[defaults] 也有一行 hostname（#385），後面接的是空行不是 source。
+            'hostname = "amr01"\nsource',
+            'hostname = "amr01"\nschema = ".schemas/elsewhere.json"\nsource',
         ),
         encoding="utf-8",
     )
@@ -3404,8 +3560,9 @@ def _listing_with_schema(
     listing = repo / "config-list.toml"
     listing.write_text(
         listing.read_text(encoding="utf-8").replace(
-            'hostname = "amr01"\n',
-            f'hostname = "amr01"\nschema = ".schemas/{_PARAM_UID}.json"\n',
+            # 只對條目那一行：[defaults] 也有一行 hostname（#385），後面接的是空行不是 source。
+            'hostname = "amr01"\nsource',
+            f'hostname = "amr01"\nschema = ".schemas/{_PARAM_UID}.json"\nsource',
         ),
         encoding="utf-8",
     )

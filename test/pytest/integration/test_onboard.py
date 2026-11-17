@@ -29,14 +29,19 @@ from config_manager.io.onboard import OnboardRequest, onboard
 from config_manager.io.preflight import CONFIG_LIST_NAME
 from config_manager.io.source import service_identity
 from config_manager.io.repo import source_relpath, write_config_list as real_write_config_list
-from config_manager.io.source import local_hostname
 
 import pytest
 
 _AUTHOR = "陳小明 <ming@example.com>"
 
-_SEED = """\
+# 已保存新納管預設主機名稱（#385）：納管用它，不再讀本機或環境變數。
+_HOSTNAME = "amr01"
+
+_SEED = f"""\
 list_version = 1
+
+[defaults]
+hostname = "{_HOSTNAME}"
 
 [defaults.permissions]
 owner = "root"
@@ -485,7 +490,7 @@ def test_a_rollback_that_hits_a_writer_error_still_fails_loudly(tmp_path, monkey
 
 def _repo_relpath(repo, path):
     """來源檔在 repo 內會落到的相對路徑，與 onboard 內部算的一致（用 realpath 的目標）。"""
-    return source_relpath(local_hostname(), os.path.realpath(str(path)))
+    return source_relpath(_HOSTNAME, os.path.realpath(str(path)))
 
 
 def test_a_rollback_restores_a_pre_existing_source_copy(tmp_path, monkeypatch):

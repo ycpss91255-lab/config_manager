@@ -411,6 +411,10 @@
 
   /* W9 白名單維護 */
   #whitelist { padding: 16px 20px 40px; }
+  #settings { padding: 16px 20px 40px; }
+  .settings-bar { display: flex; align-items: center; gap: 12px; }
+  .host-name { max-width: 720px; }
+  .host-name-edit { display: flex; gap: 8px; margin: 8px 0; }
   .whitelist-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
   .whitelist-title { font-size: 15px; margin: 0; }
   .whitelist-add-row { display: flex; gap: 8px; margin-bottom: 8px; }
@@ -552,6 +556,8 @@
   <span class="who mode" data-testid="current-mode"></span>
   <button type="button" class="editing-only" data-testid="open-browse">納管</button>
   <button type="button" class="editing-only" data-testid="open-whitelist" hidden>白名單</button>
+  <!-- 全域設定（#385）：查看不需要編輯權，兩種角色都看得到；確認與修改在頁面裡限開發者。 -->
+  <button type="button" data-testid="open-settings">設定</button>
   <button type="button" data-testid="rescan">檢查差異</button>
   <!-- 三段式的第三段（#22、§7.4.3）：進版是全域動作，按鈕顯示待進版草稿數；捨棄變更清草稿、不動來源與目標。 -->
   <button type="button" class="editing-only" data-testid="discard-all" disabled>捨棄變更</button>
@@ -654,6 +660,30 @@
   <ul data-testid="whitelist-roots" class="whitelist-roots"></ul>
 </section>
 
+<!-- W10 設定（#385）：全域設定，目前只有「新納管預設主機名稱」。元素的 data-testid 依 UI-ELEMENTS.md W10。 -->
+<section id="settings" data-testid="settings" hidden>
+  <div class="settings-bar">
+    <button type="button" data-testid="settings-back">返回</button>
+    <h2>設定</h2>
+  </div>
+  <section class="host-name" data-testid="host-name">
+    <h3>新納管預設主機名稱</h3>
+    <p data-testid="host-name-scope">只用於之後新納管的 config，納管時寫進那一筆；不修改已納管項目的 hostname。</p>
+    <p data-testid="host-name-saved"></p>
+    <p data-testid="host-name-candidate" hidden></p>
+    <p class="notice" data-testid="host-name-unconfirmed" hidden></p>
+    <ul data-testid="host-name-sources" hidden></ul>
+    <div class="host-name-edit">
+      <input type="text" data-testid="host-name-input" aria-label="新納管預設主機名稱">
+      <button type="button" class="editing-only" data-testid="host-name-save" hidden>保存</button>
+    </div>
+    <p class="notice" data-testid="host-name-readonly" hidden>只有開發者能確認或修改新納管預設主機名稱；一般使用者只能查看。</p>
+    <p data-testid="host-name-role-note">開發者角色是自我宣告，不是帳號認證。</p>
+    <p class="notice error" data-testid="host-name-error" role="alert" hidden></p>
+    <p class="notice" data-testid="host-name-done" hidden></p>
+  </section>
+</section>
+
 <!-- W8 納管確認（#14）：偵測結果供確認 → 寫入。從 W7 選檔後進入。
      元素的 data-testid 與可見文字依 UI-ELEMENTS.md 的 W8。 -->
 <section id="onboard-confirm" data-testid="onboard-confirm" hidden>
@@ -673,6 +703,8 @@
   </div>
   <p class="onboard-meta">
     <span data-testid="onboard-hostname" class="onboard-hostname"></span>
+    <!-- 還沒保存新納管預設主機名稱（#385）：顯示缺少與設定入口，「確認寫入」不能完成。 -->
+    <button type="button" data-testid="onboard-hostname-settings" hidden>到設定</button>
     <span data-testid="onboard-permissions" class="onboard-permissions"></span>
   </p>
   <p class="onboard-summary" data-testid="onboard-summary"></p>
@@ -4236,6 +4268,7 @@ function hideAllPageViews() {
   browseView.hidden = true;
   confirmView.hidden = true;
   whitelistView.hidden = true;
+  settingsView.hidden = true;
 }
 
 // ── 閒置逾時（#48）──────────────────────────────────────────────────────────────
@@ -4962,6 +4995,103 @@ browseView.querySelector(".browse-go").addEventListener("click", () => {
   if (path) browseTo(path);
 });
 
+// ── W10 設定：新納管預設主機名稱（#385）──────────────────────────────────────────
+// GET /api/host-name 查看（不需要編輯權）；PUT 確認或修改（限開發者、需要編輯權，後端也擋）。
+// 候選與預填都只是預填，**不自動保存**，也不修改既有 config 的 hostname。來源不一致時兩個都列、
+// 不預填，由開發者確認。
+const settingsView = document.querySelector("[data-testid='settings']");
+const settingsButton = document.querySelector("[data-testid='open-settings']");
+const hostNameEl = (name) => settingsView.querySelector(`[data-testid='host-name-${name}']`);
+const SOURCE_TEXT = { candidate: "本次啟動取得的候選", entries: "既有條目都使用" };
+
+function showSettings() {
+  hideAllPageViews();
+  header.hidden = false;
+  settingsView.hidden = false;
+  hostNameEl("error").hidden = true;
+  hostNameEl("done").hidden = true;
+  loadHostName();
+}
+
+async function loadHostName() {
+  try {
+    const response = await apiFetch(`${API_BASE}/api/host-name`);
+    if (!response.ok) throw new Refused(await loadErrorText(response));
+    renderHostName(await response.json());
+  } catch (error) {
+    hostNameEl("error").textContent = failureText("讀取新納管預設主機名稱", error);
+    hostNameEl("error").hidden = false;
+  }
+}
+
+function renderHostName(view) {
+  hostNameEl("saved").textContent = view.saved === null
+    ? "還沒保存新納管預設主機名稱：納管新 config 之前，要先在這裡確認或輸入這台機器的名稱。"
+    : `保存的納管預設名稱：${view.saved}`;
+  const candidate = hostNameEl("candidate");
+  candidate.hidden = view.candidate === null;
+  candidate.textContent = view.candidate === null
+    ? ""
+    : `本次啟動取得的候選：${view.candidate}（不保證是即時的主機名稱）`;
+  const unconfirmed = hostNameEl("unconfirmed");
+  unconfirmed.hidden = view.unconfirmed === null;
+  unconfirmed.textContent = view.unconfirmed === null
+    ? ""
+    : `目前主機名稱尚未確認：${view.unconfirmed}`;
+  const sources = hostNameEl("sources");
+  sources.hidden = view.sources.length < 2;
+  sources.replaceChildren(...view.sources.map((source) => element("li", {
+    "data-testid": `host-name-source-${source.kind}`,
+    text: `${SOURCE_TEXT[source.kind]}：${source.hostname}`,
+  })));
+  if (view.sources.length >= 2 && view.prefill === null) {
+    sources.appendChild(element("li", {
+      text: "名稱來源不一致，不會自動選一個——請確認要保存哪一個，或直接輸入。",
+    }));
+  }
+  const developer = Boolean(currentIdentity && currentIdentity.role === "developer");
+  const input = hostNameEl("input");
+  input.value = view.prefill ?? view.saved ?? "";
+  input.disabled = !developer;
+  hostNameEl("save").hidden = !developer;
+  hostNameEl("readonly").hidden = developer;
+}
+
+async function saveHostName() {
+  const button = hostNameEl("save");
+  hostNameEl("error").hidden = true;
+  hostNameEl("done").hidden = true;
+  button.disabled = true;
+  try {
+    const response = await editFetch(`${API_BASE}/api/host-name`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hostname: hostNameEl("input").value.trim() }),
+    });
+    if (!response.ok) throw new Refused(await loadErrorText(response));
+    const view = await response.json();
+    renderHostName(view);
+    hostNameEl("done").textContent =
+      `已保存新納管預設主機名稱：${view.saved}。已納管項目的 hostname 沒有改。`;
+    hostNameEl("done").hidden = false;
+  } catch (error) {
+    hostNameEl("error").textContent = failureText("保存新納管預設主機名稱", error);
+    hostNameEl("error").hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+settingsButton.addEventListener("click", showSettings);
+// 納管確認頁的「到設定」（#385）：缺少名稱時從那裡直接過去。
+document.querySelector("[data-testid='onboard-hostname-settings']")
+  .addEventListener("click", showSettings);
+hostNameEl("save").addEventListener("click", saveHostName);
+settingsView.querySelector("[data-testid='settings-back']").addEventListener("click", () => {
+  if (currentIdentity) showList(currentIdentity);
+  else location.reload();
+});
+
 // ── W8 納管確認（#14）───────────────────────────────────────────────────────
 // 選檔（W7）→「檢視並納管」→ POST /api/inspect → 顯示格式／型別／歧義／權限／hostname
 // 供確認 → 逐條確認歧義後 → POST /api/configs 寫入 → 回清單。型別只顯示不可編輯（編輯是
@@ -4977,6 +5107,9 @@ const confirmView = document.querySelector("[data-testid='onboard-confirm']");
 const onboardPathEl = document.querySelector("[data-testid='onboard-path']");
 const onboardFormatEl = document.querySelector("[data-testid='onboard-format']");
 const onboardHostnameEl = document.querySelector("[data-testid='onboard-hostname']");
+const onboardHostnameSettingsEl = document.querySelector("[data-testid='onboard-hostname-settings']");
+// 偵測回報還沒保存新納管預設主機名稱（#385）：「確認寫入」一律停用，後端也會擋。
+let onboardHostnameMissing = false;
 const onboardPermsEl = document.querySelector("[data-testid='onboard-permissions']");
 const onboardSummaryEl = document.querySelector("[data-testid='onboard-summary']");
 const onboardTypesEl = document.querySelector("[data-testid='onboard-types']");
@@ -5013,6 +5146,8 @@ function clearInspectResults() {
   // 而殘留的歧義勾選框仍掛著 change→refreshSubmitState——勾滿就把「確認寫入」重新解鎖，於是
   // 對一個偵測失敗的檔案送出納管、還帶著另一檔的歧義確認，繞過 AC4 的確認閘門。
   onboardHostnameEl.textContent = "";
+  onboardHostnameMissing = false;
+  onboardHostnameSettingsEl.hidden = true;
   onboardPermsEl.textContent = "";
   onboardSummaryEl.textContent = "";
   onboardTypesEl.replaceChildren();
@@ -5048,7 +5183,12 @@ async function runInspect() {
 }
 
 function renderInspect(payload) {
-  onboardHostnameEl.textContent = `將以 hostname＝${payload.hostname} 納管`;
+  onboardHostnameMissing = payload.hostname === null;
+  onboardHostnameEl.textContent = onboardHostnameMissing
+    ? payload.hostname_problem
+    : `將以 hostname＝${payload.hostname} 納管`;
+  onboardHostnameEl.dataset.missing = String(onboardHostnameMissing);
+  onboardHostnameSettingsEl.hidden = !onboardHostnameMissing;
   const permissions = payload.permissions;
   onboardPermsEl.textContent =
     `原始權限 ${permissions.owner}:${permissions.group} ${permissions.mode}`;
@@ -5108,7 +5248,8 @@ function refreshSubmitState() {
   // 錯誤顯示中一律停用：偵測失敗的檔案不該送得出去，即使有殘留／勾選的框（縱深防禦，
   // 主要仍靠 clearInspectResults 不留殘留框）。
   const acks = [...onboardAmbiguitiesEl.querySelectorAll("input[type='checkbox']")];
-  onboardSubmitEl.disabled = !onboardErrorEl.hidden || !acks.every((box) => box.checked);
+  onboardSubmitEl.disabled = !onboardErrorEl.hidden || onboardHostnameMissing
+    || !acks.every((box) => box.checked);
 }
 
 function renderOnboardError(detail) {

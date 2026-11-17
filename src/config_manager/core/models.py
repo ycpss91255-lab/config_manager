@@ -19,6 +19,9 @@ class Defaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     permissions: Permissions
+    # 新納管的預設主機名稱（#385）：只在納管新 config 時預填，既有條目一律讀自己的 hostname。
+    # 還沒設定（None）是合法狀態——只擋需要名稱的納管。
+    hostname: str | None = None
 
 
 class FileEntry(BaseModel):

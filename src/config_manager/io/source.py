@@ -2,9 +2,9 @@
 
 外部互動層：這裡真的碰檔案系統。核心層不碰（ADR-00000011）。
 
-`read_source` 與 `local_hostname` 放在同一個模組，因為它們共用同一條性質：**系統
-唯一一次向外界取值的時刻**，取到之後就凍結進紀錄、永不再讀（不變式 8、
-ADR-00000012、T22）。
+`read_source` 是**系統唯一一次向外界取值的時刻**，取到之後就凍結進紀錄、永不再讀
+（不變式 8、ADR-00000012、T22）。本機 hostname 原本也在這裡讀（`local_hostname`），#385 起
+納管用的名稱改為清單檔的 `[defaults] hostname`，由開發者確認後保存，這裡不再讀它。
 
 **判定不在這裡重寫。** 「這條路徑落在白名單內嗎」由 `core/whitelist.decide` 回答
 ——那是純字面比對，已經在 #11 落地並驗過。這一層只做核心做不到的那半：`realpath`
@@ -35,17 +35,14 @@ import errno
 import grp
 import os
 import pwd
-import socket
 import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from config_manager.core.models import Permissions
-from config_manager.core.attributes import is_safe_hostname
 from config_manager.core.whitelist import decide
 from config_manager.io.errors import (
     ContentUnreadable,
-    HostnameInvalid,
     SourceAbsent,
     SourceNotRegularFile,
     SourceOutsideRoots,
@@ -139,37 +136,6 @@ def read_source(
         permissions=_permissions_of(info),
         resolved_path=resolved,
     )
-
-
-def local_hostname() -> str:
-    """本機 hostname——這台機器在紀錄裡的身分。
-
-    優先取環境變數 `CM_HOSTNAME`，沒設才回 `socket.gethostname()`（#178）。
-
-    為什麼要 `CM_HOSTNAME`：納管當下讀一次、寫進檔案、之後永不再讀（不變式 8、
-    ADR-00000012），所以那一次讀到的必須穩定。而 `gethostname()` 在 bridge 網路下讀到的
-    是每次重建都變的容器 ID，v0.2.0 檢查點 1 要求「重跑不因環境改變而變動」就會靜默不成立。
-    `CM_HOSTNAME` 由 compose 明寫這台機器的正規名稱，任何網路模式都穩定、重建不變，也讓
-    部署者明確命名機器。這不違反 ADR-00000012 否決的「執行期重讀」——仍是納管當下讀一次，
-    只是讓那一次是穩定值。
-
-    這一層讀環境變數（而非照 ADR-00000011 一路從 cli 邊界傳進來）是刻意的：`local_hostname`
-    本就是「向外界取這台機器的身分」的那個點，`CM_HOSTNAME` 是那個身分的明確形式，與它讀
-    `gethostname()` 同性質；把它一路穿過 create_app／onboard 只為改一個部署身分值，代價不成
-    比例。空字串當作沒設（`.strip()` 後為空）。
-    """
-    override = os.environ.get("CM_HOSTNAME", "").strip()
-    hostname = override or socket.gethostname()
-    # hostname 會流進 `files/<hostname>/` 的路徑段與 commit 主旨 `<name>@<hostname>`。含 `/`、
-    # `.`／`..`、或控制字元（換行）的值會逃出 `files/` 邊界或重塑主旨。gethostname() 本就安全，
-    # 會出事的是部署者手打的 CM_HOSTNAME——不安全就大聲失敗，不悄悄清洗（#178 資安審查）。
-    if not is_safe_hostname(hostname):
-        raise HostnameInvalid(
-            f"hostname 不是安全的名稱：「{hostname}」。它會被寫進 files/<hostname>/ 的路徑與"
-            f"變更紀錄的主旨，只允許字母數字與 . _ -。"
-            f"下一步：把 CM_HOSTNAME 設成這台機器的正規名稱（例如 amr01），不要含 / 或空白"
-        )
-    return hostname
 
 
 def service_identity() -> tuple[str, frozenset[str], bool]:

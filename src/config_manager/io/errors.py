@@ -270,13 +270,19 @@ class SourceAbsent(SourceError):
     """
 
 
-class HostnameInvalid(Exception):
-    """`CM_HOSTNAME` 覆寫的值不是安全的 hostname（#178 的資安審查）。
+class DefaultHostnameLeftBehind(Exception):
+    """保存新納管預設主機名稱時 commit 沒成，還原清單檔也失敗（#385）。
 
-    hostname 會流進 `files/<hostname>/` 的路徑段與 commit 主旨 `<name>@<hostname>`。含 `/`、
-    `..`／`.`、或控制字元（換行）的值會逃出 `files/` 邊界、或重塑 commit 主旨。`gethostname()`
-    的結果本就是安全的 hostname；會出事的是部署者手打的 `CM_HOSTNAME`——寧可大聲失敗，不
-    悄悄把機器身分清洗成別的東西（不變式 2）。
+    清單檔一被寫入，下一次納管就用新的值；沒有 commit 就沒有「誰在何時改成什麼」的紀錄。
+    兩件事都說：原本的失敗在 `__cause__`，訊息指名要手動檢視的檔。
+    """
+
+
+class DefaultHostnameMissing(Exception):
+    """還沒保存新納管預設主機名稱（清單檔的 `[defaults] hostname`，#385），所以不能納管新 config。
+
+    只擋需要名稱的納管：啟動、設定頁、既有資料的操作照常（維護者 11/17）。不從環境變數或
+    `gethostname()` 補一個——名字只來自明確保存的設定（不變式 8）。
     """
 
 

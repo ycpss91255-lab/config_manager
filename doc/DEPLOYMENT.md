@@ -17,13 +17,48 @@
 2. 建置並啟動：
 
    ```bash
-   docker compose build
-   docker compose up -d
+   just docker build
+   just docker run
    ```
 
-   （`just docker build`、`just docker run` 是同一件事。）
+   `just docker run` 除了 `docker compose up -d`，還在主機上做兩件事（#385）：起之前檢查舊的
+   `CM_HOSTNAME`（見下面「從舊版升級」），起之後讀這台機器的 `hostname`、交給服務當「本次啟動
+   取得的候選」。直接用 `docker compose up -d` 也起得來，但沒有候選（設定頁會顯示目前主機名稱尚未
+   確認），主機端的舊變數也檢查不到。啟動工具不檢查服務是否就緒；它說「Compose 啟動命令完成」
+   時，服務是否正常要看 `docker compose ps`。
 
 3. 在**這台機器上**開 `http://localhost:8081`。
+
+4. 第一次納管之前，以開發者身分到「設定」確認「新納管預設主機名稱」：預填本次啟動取得的候選，
+   沒有候選就直接輸入。保存的值存在設定庫的清單檔（`config-list.toml` 的 `[defaults] hostname`），
+   之後每一筆納管都用它；它**不修改已納管項目的 hostname**。還沒保存時不能納管，其餘照常。
+
+## 新納管預設主機名稱與服務重啟
+
+- 候選只對**本次服務啟動**有效。容器自己重啟（`restart: unless-stopped`、`docker restart`、主機
+  重開機）之後，設定頁顯示目前主機名稱尚未確認——重跑 `just docker run` 就會取得（容器沿用時
+  不會重啟服務）。已保存的名稱不受影響，納管照常。
+- 同一次服務啟動已有候選時，重跑 `just docker run` 不更新它：它是「本次啟動取得的候選」，不保證
+  是即時的主機名稱。
+- 候選放在容器裡的 `/run/config_manager/`，不在設定庫、也不在資料卷，容器每次啟動時清空；現有的
+  `git bundle` 備份、資料卷打包、設定庫複製都不包含它。保存的名稱在清單檔裡，所以會隨備份與
+  還原走——還原到另一台機器時，先到設定頁確認它是不是這台的名稱再納管。
+- CLI 還沒有對應的指令（排在 v0.10.0）；確認與修改只能在介面上做。
+
+## 從舊版升級：`CM_HOSTNAME`
+
+#385 起名字不再由 `CM_HOSTNAME` 決定，compose 也不再把它傳進容器。照這個順序：
+
+1. **移除舊變數**：`.env` 裡的 `CM_HOSTNAME=…`、shell 設定檔裡的 `export CM_HOSTNAME=…`、
+   自訂 compose 檔或 `docker run -e` 裡的 `CM_HOSTNAME`。
+2. **重新啟動服務**：`just docker run`。
+3. **到介面「設定」確認新納管預設主機名稱**。既有條目的 hostname 全部相同時，設定頁會把它列成
+   名稱來源之一；與本次啟動取得的候選不同時兩個都列出、不自動選，由開發者確認。既有條目不改名。
+
+留著舊變數時會停下來並指出如何移除：啟動工具檢查它自己的環境變數與 repo 根目錄的 `.env`
+（`.env` 當文字逐行讀、不執行；`export` 寫法與空值都算；`#` 開頭的註解不算；不檢查
+`--env-file`、`COMPOSE_ENV_FILES` 指定的其他檔），服務檢查容器自己的環境（空值也算）。直接用
+`docker compose up` 時主機端檢查不到——名稱不受影響，因為服務已不讀它。
 
 ## 只有本機連得到
 
@@ -48,13 +83,12 @@ ssh -N -L 8081:127.0.0.1:8081 -L 8080:127.0.0.1:8080 <使用者>@<那台機器>
 而且需要容器之間隔離時，疊上 `compose.bridge.yaml`：
 
 ```bash
-CM_HOSTNAME=<這台機器的名稱> docker compose -f compose.yaml -f compose.bridge.yaml up -d
+just docker bridge run
 ```
 
-（或把 `CM_HOSTNAME` 寫進 `.env` 後 `just docker bridge run`。）
-
-- **`CM_HOSTNAME` 非給不可。** bridge 下容器的主機名每次重建都換，而納管會把主機名寫進紀錄。
-  沒給的話 compose 在啟動前就停下，訊息會指名這個變數。
+- **主機名稱不靠容器讀。** bridge 下容器自己的名稱是每次重建都換的容器 ID；`just docker bridge run`
+  的 post-run hook 在**主機**上讀 `hostname` 當候選，開發者在設定頁確認後才保存（#385）。不再需要
+  `CM_HOSTNAME`。
 - 埠號對應的主機端一樣只綁 `127.0.0.1`，所以「只有本機連得到」不變，遠端操作同樣走 SSH 通道。
 - 同一台機器上其他掛在 docker 預設網路的容器連得到這兩個服務。
 - 要查「請求到底有沒有到後端」時，設 `CM_ACCESS_LOG=1` 再起：後端每個請求在 `docker logs` 記一行

@@ -203,6 +203,9 @@ seed() {
     "${API}/api/session" >/dev/null
   take_editing
   call POST /api/allowed-roots "{\"prefix\":\"${CM_TARGET_ROOT}/extra\"}" >/dev/null
+  # 新納管預設主機名稱（#385）：納管要它。演練直接用 docker compose 起服務、不經啟動工具，沒有
+  # 候選——由開發者直接輸入一個，與介面上的做法相同。它存在清單檔裡，所以也跟著備份與還原。
+  call PUT /api/host-name '{"hostname":"drill-host"}' >/dev/null
   KEEP="$(onboard keep.yaml)"
   LOST="$(onboard lost.yaml)"
   DRIFT="$(onboard drift.yaml)"
@@ -307,7 +310,9 @@ restores_and_compares_again() {
     || fail "還原後從介面加的白名單根目錄不見了" "檢查 allowed-roots.toml 有沒有提交進設定庫"
   [[ "$(call GET /api/configs | json 'len(d)')" == "3" ]] \
     || fail "還原後清單不是三份" "檢查 config-list.toml 有沒有跟著備份回來"
-  ok "還原後 HEAD ${GOOD_HEAD}：清單三份、keep 已進版的值 2.5、歷史 ${HISTORY_BEFORE} 筆、白名單都回來"
+  [[ "$(call GET /api/host-name | json 'd["saved"]')" == "drill-host" ]] \
+    || fail "還原後新納管預設主機名稱不是備份時保存的 drill-host" "檢查 config-list.toml 的 [defaults] hostname 有沒有跟著備份回來"
+  ok "還原後 HEAD ${GOOD_HEAD}：清單三份、keep 已進版的值 2.5、歷史 ${HISTORY_BEFORE} 筆、白名單、新納管預設主機名稱都回來"
 
   STEP="重新比對"
   local states

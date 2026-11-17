@@ -32,6 +32,7 @@ import pytest
 import config_manager
 from config_manager.api import drafts as drafts_api
 from config_manager.core.allowed_roots import load as load_allowed_roots
+from config_manager.core.config_list import load as load_config_list
 from config_manager.core.errors import UidHorizonReached
 from config_manager.io import drift as drift_io
 from config_manager.io import promote as promote_io
@@ -212,7 +213,7 @@ def test_configs_surfaces_a_pathological_target_as_a_row_error_not_a_bare_500(ap
     fifo_target.unlink(missing_ok=True)
     os.mkfifo(fifo_target)
     header = (
-        'list_version = 1\n\n[defaults.permissions]\n'
+        'list_version = 1\n\n[defaults]\nhostname = "amr01"\n\n[defaults.permissions]\n'
         'owner = "root"\ngroup = "root"\nmode = "0644"\n'
     )
     entry = (
@@ -297,7 +298,7 @@ def test_cli_list_marks_a_pathological_target_as_an_error_row(api, repo):
     fifo_target.unlink(missing_ok=True)
     os.mkfifo(fifo_target)
     header = (
-        'list_version = 1\n\n[defaults.permissions]\n'
+        'list_version = 1\n\n[defaults]\nhostname = "amr01"\n\n[defaults.permissions]\n'
         'owner = "root"\ngroup = "root"\nmode = "0644"\n'
     )
     entry = (
@@ -338,6 +339,9 @@ def _write_source(sources_root, name, content=b"max_vel: 0.8\n"):
 
 _CONFIG_LIST_HEADER = """\
 list_version = 1
+
+[defaults]
+hostname = "amr01"
 
 [defaults.permissions]
 owner = "root"
@@ -865,45 +869,330 @@ def test_inspect_returns_format_ambiguities_and_summary(api, sources_root):
     assert result["permissions"]["mode"]
 
 
-def test_inspect_previews_the_hostname_onboarding_will_use(api, sources_root):
-    # 確認畫面要在納管前預覽 hostname（AC5：核對機器身分）。hostname 由後端決定
-    # （CM_HOSTNAME 或 gethostname），納管當下寫進條目與 files/<hostname>/ 路徑。
+def test_inspect_previews_the_saved_default_hostname_onboarding_will_use(api, sources_root):
+    # 確認畫面要在納管前預覽 hostname（AC5：核對機器身分）。#385 起它是清單檔的
+    # [defaults] hostname——共用的設定庫保存的是 amr01（conftest 的 _MINIMAL_LIST）。
     source = _write_source(sources_root, "hostname_preview.yaml", b"a: 1\n")
 
     result = _post(api, "/api/inspect", {"source_path": source, "format": "yaml"})
 
-    assert isinstance(result["hostname"], str) and result["hostname"]
+    assert result["hostname"] == "amr01"
 
 
-def test_inspect_unsafe_hostname_is_a_500_with_a_message(api, sources_root, monkeypatch):
-    # CM_HOSTNAME 設成不安全值（含 /）→ HostnameInvalid。先前 onboard／inspect 都漏接成裸
-    # 500；現在映成帶可行動訊息的 500（指名 CM_HOSTNAME）。就地測才控得了伺服器的 env。
-    if os.environ.get("CM_SYSTEM_BASE_URL"):
-        pytest.skip("外部映像的 CM_HOSTNAME 由映像決定，就地起服務才控得了 env")
-    monkeypatch.setenv("CM_HOSTNAME", "bad/host")
-    source = _write_source(sources_root, "unsafe_host.yaml", b"a: 1\n")
+# ── 新納管預設主機名稱（#385）：查看、候選的判定、確認或修改、沒保存時納管被拒 ──────────────
+# 每一則都在 `host_name_service` 自己的設定庫與執行期目錄上：還沒保存名稱，服務剛起來。
+
+
+def _host_name(service):
+    return _get(service.url, "/api/host-name")
+
+
+def _put_host_name(service, hostname, token=_ACQUIRE):
+    return _send(service.url, "PUT", "/api/host-name", {"hostname": hostname}, token=token)
+
+
+def _as(service, role):
+    identity = {"name": "陳小明", "email": "ming@example.com", "role": role}
+    _post(service.url, "/api/session", identity)
+
+
+def _record_candidate(service, record):
+    (service.runtime / "host-candidate.json").write_text(json.dumps(record), encoding="utf-8")
+
+
+def _saved_default(service):
+    text = (service.repo / "config-list.toml").read_text(encoding="utf-8")
+    return load_config_list(text).defaults.hostname
+
+
+def _head(repo):
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _with_entries(service, *hostnames):
+    """在那份設定庫裡放幾筆既有條目（各自的 hostname），並提交。"""
+    root = service.repo
+    (root / "files").mkdir(exist_ok=True)
+    body = (root / "config-list.toml").read_text(encoding="utf-8")
+    for index, hostname in enumerate(hostnames):
+        name = f"e{index}"
+        (root / "files" / f"{name}.yaml").write_text("x: 1\n", encoding="utf-8")
+        body += (
+            f'\n[[files]]\nuid = "mfz3k9e{index}"\nname = "{name}"\nhostname = "{hostname}"\n'
+            f'source = "files/{name}.yaml"\ntarget = "/opt/robot/config/{name}.yaml"\n'
+            'format = "yaml"\ngroups = []\n'
+        )
+    (root / "config-list.toml").write_text(body, encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "-c", "user.name=seed", "-c", "user.email=s@e.x",
+         "commit", "-q", "-m", "chore: 既有條目"],
+        check=True,
+    )
+
+
+def test_viewing_the_default_hostname_needs_neither_the_edit_right_nor_the_developer_role(
+    host_name_service,
+):
+    # 維護者 11/17：查看不需要編輯權，確認與修改才需要；一般使用者只能查看。
+    _as(host_name_service, "user")
+
+    assert _host_name(host_name_service)["saved"] is None
+
+
+def test_a_candidate_recorded_for_this_start_is_offered_as_this_starts_candidate(
+    host_name_service,
+):
+    _record_candidate(
+        host_name_service, {"start_id": host_name_service.start_id(), "hostname": "amr07"}
+    )
+
+    view = _host_name(host_name_service)
+
+    assert (view["candidate"], view["unconfirmed"]) == ("amr07", None)
+
+
+def test_a_candidate_from_another_start_is_not_used(host_name_service):
+    _record_candidate(host_name_service, {"start_id": "b" * 32, "hostname": "amr07"})
+
+    view = _host_name(host_name_service)
+
+    assert (view["candidate"], "沒有收到本次啟動" in view["unconfirmed"]) == (None, True)
+
+
+def test_without_a_candidate_the_reason_points_to_the_launch_tool_output(host_name_service):
+    # exec 根本進不去時，服務無從得知原因——不猜，指向啟動工具的輸出（維護者 11/17）。
+    view = _host_name(host_name_service)
+
+    assert (view["candidate"], "啟動工具的輸出" in view["unconfirmed"]) == (None, True)
+
+
+def test_an_unavailable_record_shows_the_reason_the_launch_tool_recorded(host_name_service):
+    _record_candidate(
+        host_name_service,
+        {"start_id": host_name_service.start_id(), "unavailable": "hostname: command not found"},
+    )
+
+    view = _host_name(host_name_service)
+
+    assert (view["candidate"], "hostname: command not found" in view["unconfirmed"]) == (
+        None,
+        True,
+    )
+
+
+def test_a_malformed_candidate_says_it_is_not_valid(host_name_service):
+    (host_name_service.runtime / "host-candidate.json").write_bytes(b"{nope")
+
+    view = _host_name(host_name_service)
+
+    assert (view["candidate"], "不合法" in view["unconfirmed"]) == (None, True)
+
+
+def test_a_left_behind_temporary_file_is_not_taken_as_a_candidate(host_name_service):
+    leftover = host_name_service.runtime / ".config_manager-abc.tmp"
+    leftover.write_text(
+        json.dumps({"start_id": host_name_service.start_id(), "hostname": "amr07"}),
+        encoding="utf-8",
+    )
+
+    assert _host_name(host_name_service)["candidate"] is None
+
+
+def test_replacing_the_published_start_id_file_does_not_change_the_judgement(
+    host_name_service,
+):
+    # 服務用自己記憶體裡的識別碼判定，不重讀執行期目錄裡那一份。
+    _record_candidate(
+        host_name_service, {"start_id": host_name_service.start_id(), "hostname": "amr07"}
+    )
+    (host_name_service.runtime / "start-id").write_text("c" * 32 + "\n", encoding="utf-8")
+
+    assert _host_name(host_name_service)["candidate"] == "amr07"
+
+
+def test_the_next_start_does_not_use_the_previous_starts_candidate(host_name_service):
+    _record_candidate(
+        host_name_service, {"start_id": host_name_service.start_id(), "hostname": "amr07"}
+    )
+
+    with host_name_service.another_start() as restarted:
+        view = _get(restarted, "/api/host-name")
+
+    assert view["candidate"] is None
+
+
+def test_entries_and_candidate_that_disagree_are_both_listed_and_nothing_is_prefilled(
+    host_name_service,
+):
+    # 候選來源不一致時不默默選一個：列出每個來源與它的值，由開發者確認（維護者 11/17）。
+    _with_entries(host_name_service, "amr01", "amr01")
+    _record_candidate(
+        host_name_service, {"start_id": host_name_service.start_id(), "hostname": "amr07"}
+    )
+
+    view = _host_name(host_name_service)
+
+    assert (
+        sorted((source["kind"], source["hostname"]) for source in view["sources"]),
+        view["prefill"],
+    ) == ([("candidate", "amr07"), ("entries", "amr01")], None)
+
+
+def test_a_single_source_is_prefilled_but_not_saved(host_name_service):
+    _with_entries(host_name_service, "amr01", "amr01")
+
+    view = _host_name(host_name_service)
+
+    assert (view["prefill"], view["saved"]) == ("amr01", None)
+
+
+def test_entries_with_different_hostnames_are_not_a_source(host_name_service):
+    # 遷移只認「既有條目的 hostname 全部相同」（維護者 11/17）。
+    _with_entries(host_name_service, "amr01", "amr02")
+
+    assert _host_name(host_name_service)["sources"] == []
+
+
+def test_a_developer_holding_the_edit_right_saves_the_default_hostname(host_name_service):
+    _as(host_name_service, "developer")
+
+    _put_host_name(host_name_service, "amr07")
+
+    assert (_host_name(host_name_service)["saved"], _saved_default(host_name_service)) == (
+        "amr07",
+        "amr07",
+    )
+
+
+def test_each_save_is_recorded_with_the_values_before_and_after_and_the_operator(
+    host_name_service,
+):
+    _as(host_name_service, "developer")
+    _put_host_name(host_name_service, "amr07")
+
+    _put_host_name(host_name_service, "amr08")
+
+    log = subprocess.run(
+        ["git", "-C", str(host_name_service.repo), "log", "-1", "--format=%an%n%s"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    author, subject = log.splitlines()
+    assert (author, "amr07" in subject, "amr08" in subject) == ("陳小明", True, True)
+
+
+def test_saving_the_default_leaves_existing_entries_unchanged(host_name_service):
+    _with_entries(host_name_service, "amr01")
+    before = load_config_list(
+        (host_name_service.repo / "config-list.toml").read_text(encoding="utf-8")
+    ).files
+    _as(host_name_service, "developer")
+
+    _put_host_name(host_name_service, "amr07")
+
+    after = load_config_list(
+        (host_name_service.repo / "config-list.toml").read_text(encoding="utf-8")
+    ).files
+    assert after == before
+
+
+def test_the_user_role_cannot_save_the_default_hostname(host_name_service):
+    _as(host_name_service, "user")
 
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _post(api, "/api/inspect", {"source_path": source, "format": "yaml"})
+        _put_host_name(host_name_service, "amr07")
 
-    assert exc.value.code == _SERVER_ERROR
-    assert "CM_HOSTNAME" in _detail(exc.value)  # 帶可行動訊息，不是裸 500
+    assert (exc.value.code, _saved_default(host_name_service)) == (_FORBIDDEN, None)
 
 
-def test_onboard_unsafe_hostname_is_a_500_with_a_message(api, sources_root, monkeypatch):
-    # TEST-PLAN 宣稱「inspect 與 onboard 皆然」——onboard 那半也要有測試釘住（#14 審查）。
-    # UI 流程靠 inspect 先擋，但 POST /api/configs 對任何 client 開放，防禦碼不能無測試而腐化。
-    if os.environ.get("CM_SYSTEM_BASE_URL"):
-        pytest.skip("外部映像的 CM_HOSTNAME 由映像決定，就地起服務才控得了 env")
-    _set_session(api)
-    monkeypatch.setenv("CM_HOSTNAME", "bad/host")
-    source = _write_source(sources_root, "onboard_badhost.yaml", b"a: 1\n")
+def test_saving_without_the_edit_right_is_refused_and_writes_nothing(host_name_service):
+    _as(host_name_service, "developer")
+    head = _head(host_name_service.repo)
+
+    with pytest.raises(urllib.error.HTTPError):
+        _put_host_name(host_name_service, "amr07", token=None)
+
+    assert (_head(host_name_service.repo), _saved_default(host_name_service)) == (head, None)
+
+
+def test_an_unsafe_default_hostname_is_refused_as_a_bad_value(host_name_service):
+    _as(host_name_service, "developer")
 
     with pytest.raises(urllib.error.HTTPError) as exc:
-        _post(api, "/api/configs", {"source_path": source, "format": "yaml"})
+        _put_host_name(host_name_service, "amr/07")
 
-    assert exc.value.code == _SERVER_ERROR
-    assert "CM_HOSTNAME" in _detail(exc.value)
+    assert (exc.value.code, _saved_default(host_name_service)) == (_UNPROCESSABLE, None)
+
+
+def test_onboarding_without_a_saved_default_hostname_is_refused_and_writes_nothing(
+    host_name_service, sources_root
+):
+    # 還沒設定時只擋需要名稱的納管，後端也擋（API 直接送納管同樣被拒，維護者 11/17）。
+    _as(host_name_service, "developer")
+    source = _write_source(sources_root, "no_default_host.yaml", b"a: 1\n")
+    head = _head(host_name_service.repo)
+
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        _post(host_name_service.url, "/api/configs", {"source_path": source, "format": "yaml"})
+
+    assert (
+        exc.value.code,
+        "新納管預設主機名稱" in _detail(exc.value),
+        _head(host_name_service.repo),
+    ) == (_CONFLICT, True, head)
+
+
+def test_without_a_saved_default_hostname_existing_configs_are_still_listed(host_name_service):
+    # 還沒設定時只擋需要名稱的納管：既有資料照常（維護者 11/17）。
+    _with_entries(host_name_service, "amr01")
+
+    rows = _get(host_name_service.url, "/api/configs")
+
+    assert [row["uid"] for row in rows] == ["mfz3k9e0"]
+
+
+def test_inspect_reports_a_missing_default_hostname(host_name_service, sources_root):
+    source = _write_source(sources_root, "inspect_no_default.yaml", b"a: 1\n")
+
+    result = _post(
+        host_name_service.url, "/api/inspect", {"source_path": source, "format": "yaml"}
+    )
+
+    assert (result["hostname"], "新納管預設主機名稱" in result["hostname_problem"]) == (None, True)
+
+
+def test_onboarding_after_saving_writes_the_saved_hostname_into_the_new_entry(
+    host_name_service, sources_root
+):
+    _as(host_name_service, "developer")
+    _put_host_name(host_name_service, "amr07")
+    source = _write_source(sources_root, "after_default_host.yaml", b"a: 1\n")
+
+    entry = _post(
+        host_name_service.url, "/api/configs", {"source_path": source, "format": "yaml"}
+    )
+
+    assert entry["hostname"] == "amr07"
+
+
+def test_changing_the_default_after_onboarding_leaves_that_entry_unchanged(
+    host_name_service, sources_root
+):
+    _as(host_name_service, "developer")
+    _put_host_name(host_name_service, "amr07")
+    source = _write_source(sources_root, "before_rename_host.yaml", b"a: 1\n")
+    uid = _post(
+        host_name_service.url, "/api/configs", {"source_path": source, "format": "yaml"}
+    )["uid"]
+
+    _put_host_name(host_name_service, "amr08")
+
+    files = load_config_list(
+        (host_name_service.repo / "config-list.toml").read_text(encoding="utf-8")
+    ).files
+    assert next(entry.hostname for entry in files if entry.uid == uid) == "amr07"
 
 
 def test_onboard_strips_control_chars_from_the_ambiguity_note(api, sources_root, repo):
@@ -3917,6 +4206,7 @@ _WRITES = [
     ("POST", "/api/configs/zzzzzzz9/schema", None),
     ("POST", "/api/configs/zzzzzzz9/types", {"path": "x", "type": "int"}),
     ("POST", "/api/configs/zzzzzzz9/attributes", {"name": "x", "hostname": "h"}),
+    ("PUT", "/api/host-name", {"hostname": "amr09"}),
 ]
 _WRITE_ROUTES = {
     ("POST", "/api/configs"), ("DELETE", "/api/configs/{uid}"),
@@ -3925,7 +4215,7 @@ _WRITE_ROUTES = {
     ("POST", "/api/promote"), ("POST", "/api/configs/{uid}/revert"),
     ("POST", "/api/configs/{uid}/resolve"), ("POST", "/api/configs/{uid}/apply"),
     ("POST", "/api/configs/{uid}/schema"), ("POST", "/api/configs/{uid}/types"),
-    ("POST", "/api/configs/{uid}/attributes"),
+    ("POST", "/api/configs/{uid}/attributes"), ("PUT", "/api/host-name"),
 }
 # 不寫入的 POST、編輯階段自己的端點：不看識別碼。
 _NOT_WRITE_ROUTES = {

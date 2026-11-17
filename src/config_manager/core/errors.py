@@ -88,6 +88,23 @@ class ConfigListMalformed(ConfigListError):
     `[[files]]`／表格書寫。與 allowed_roots 的 `RootsMalformed` 對稱。"""
 
 
+class UnsafeDefaultHostname(ConfigListError):
+    """清單檔 `[defaults] hostname`（新納管的預設主機名稱，#385）不是安全的 hostname。
+
+    它會成為之後每一筆新條目的 hostname，流進 `files/<hostname>/` 的路徑段、參照形式與變更紀錄
+    的主旨。含 `/`、空白、`.`／`..` 或控制字元的值會逃出 `files/` 邊界或重塑主旨——載入與寫出前
+    都大聲失敗（不變式 2），不悄悄清洗。
+    """
+
+
+class MissingHostname(ConfigListError):
+    """清單檔的某一筆條目沒有 `hostname`（#385）。
+
+    不變式 8：既有條目的身分只來自它自己那一筆。缺了就是資料問題，要指名是哪一筆——
+    **不以 `[defaults] hostname` 補上**：那個值只是新納管的預設，補進舊條目等於替它改名。
+    """
+
+
 class DumpMismatch(ConfigListError):
     """dump 拿到的原樣資訊無法以 uid 對回條目：有一筆沒有 uid，或兩筆共用 uid。
 
