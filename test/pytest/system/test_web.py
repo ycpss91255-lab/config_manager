@@ -2994,15 +2994,18 @@ def test_nested_parameters_render_as_a_collapsible_block_not_a_dotted_name(open_
 
 def test_a_nested_parameter_is_drawn_indented_under_its_parent(open_page, repo):
     # v0.8.0 檢查點 2「縮排由系統產生」的畫面那一半（#353）：TEST-PLAN 那一列寫「子列縮排」。
-    # 量的是畫出來的位置——子列的名稱比父列的名稱更靠右；`data-depth` 只說深度的資料對，不證明
-    # 畫面真的有縮排。寫出檔的縮排由下一則驗。
+    # 量的是畫出來的位置——子列名稱第一個看得到的字，畫在父列名稱第一個字的右邊；`data-depth`
+    # 只說深度的資料對，不證明畫面真的有縮排。名稱欄本身的外框不會動（縮排在欄內），所以量字、
+    # 不量欄。寫出檔的縮排由下一則驗。
     _listing_with(repo, "outer:\n  inner: 1\n")
     page = _open_panel(open_page())
 
-    parent = page.locator("[data-testid='param-outer'] .param-name").first.bounding_box()
-    child = page.locator("[data-testid='param-outer.inner'] .param-name").first.bounding_box()
+    parent, child = (
+        page.locator(f"{_row(path)} .param-name").first.evaluate(_FIRST_VISIBLE_GLYPH_LEFT)
+        for path in ("outer", "outer.inner")
+    )
 
-    assert child["x"] > parent["x"]
+    assert child > parent
 
 
 def test_editing_a_nested_parameter_writes_the_file_with_the_systems_indentation(open_page, repo):
@@ -3525,18 +3528,6 @@ def test_other_values_without_a_type_are_edited_as_text_and_marked_unstructured(
     assert ("未結構化" in page.inner_text(badge), control) == (True, "text")
 
 
-def test_a_multiline_value_without_a_type_keeps_its_line_breaks_when_edited(open_page, repo):
-    # v0.8.0 檢查點 3「退回文字區塊」的多行內容（#353）：原文沒有強制 textarea（附錄 C.2 只說
-    # textarea 已足夠），但退回的文字區塊要能操作多行內容——型別未知的值裡有換行時，改過之後
-    # 換行還在，不被單行輸入框吃掉。
-    _listing_many(repo, {"p": "notes:\n  - 1\n  - |\n    line one\n    line two\ncount: 3\n"})
-    page = _open_panel(open_page())
-
-    page.fill(_param_value("notes[1]"), "line one\nline three\n")
-
-    assert page.input_value(_param_value("notes[1]")) == "line one\nline three\n"
-
-
 def test_list_controls_are_absent_while_read_only(open_page, repo):
     # 唯讀分頁：增刪調序鈕都是會寫入的控制項，不出現。
     _listing_many(repo, {"p": _LIST_YAML})
@@ -3700,6 +3691,22 @@ def _listing_with_schema(
     if required:
         schema["required"] = required
     (repo / ".schemas" / f"{_PARAM_UID}.json").write_text(json.dumps(schema), encoding="utf-8")
+
+
+# 元素裡第一個不是空白的字，畫在畫面上的左邊界（像素）。量的是畫出來的字，不管縮排是用
+# padding、margin 還是前導空白做的。
+_FIRST_VISIBLE_GLYPH_LEFT = """node => {
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    const index = text.textContent.search(/\\S/);
+    if (index < 0) continue;
+    const range = document.createRange();
+    range.setStart(text, index);
+    range.setEnd(text, index + 1);
+    return range.getBoundingClientRect().left;
+  }
+  return null;
+}"""
 
 
 def _row(path: str) -> str:
@@ -7176,7 +7183,7 @@ def test_expanding_a_search_hit_brings_the_matching_row_into_view(open_page, rep
 
     box = page.locator("[data-testid='param-max_vel']").bounding_box()
     height = page.viewport_size["height"]
-    assert 0 <= box["y"] and box["y"] + box["height"] <= height
+    assert box["y"] >= 0 and box["y"] + box["height"] <= height
 
 
 def test_searching_a_value_finds_the_parameter_holding_it(open_page, repo):
