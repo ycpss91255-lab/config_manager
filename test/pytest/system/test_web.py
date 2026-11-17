@@ -53,6 +53,7 @@ from v8_coverage import line_coverage
 
 from config_manager.api.lock import LockBox
 from config_manager.api.routes import create_app
+from config_manager.core import parse as core_parse
 from config_manager.io import drift as drift_io
 from config_manager.io import promote as promote_io
 from config_manager.io.errors import TargetNotWritable
@@ -3169,6 +3170,72 @@ def test_a_value_without_a_type_is_editable_as_text_and_marked_unstructured(open
     page.wait_for_selector("[data-testid='promote-done']", state="visible")
 
     assert targets["p"].read_text(encoding="utf-8") == "note: filled in by hand\ncount: 3\n"
+
+
+# 型別未知的值含換行（#383）：`notes` 的元素型別不一致，`notes[1]` 是型別未知、內容兩行。
+_UNKNOWN_MULTILINE = "notes:\n  - 1\n  - |\n    line one\n    line two\ncount: 3\n"
+
+
+def test_a_multiline_value_without_a_type_opens_with_its_line_breaks(open_page, repo):
+    # #383：打開就是兩行，而且仍標「未結構化編輯」。單行輸入框保不住換行（F15 在字串上修過）。
+    _listing_many(repo, {"p": _UNKNOWN_MULTILINE})
+    page = _open_panel(open_page())
+
+    badge = f"{_row('notes[1]')} [data-testid='param-unstructured']"
+    shown = (page.input_value(_param_value("notes[1]")), "未結構化" in page.inner_text(badge))
+    assert shown == ("line one\nline two\n", True)
+
+
+def test_saving_another_field_leaves_a_multiline_value_without_a_type_as_it_was(open_page, repo):
+    # #383：沒碰這個值、只改 count 儲存並進版——寫出檔裡它所在的行逐位元組不變。
+    targets = _listing_many(repo, {"p": _UNKNOWN_MULTILINE})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("count"), "4")
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    expected = _UNKNOWN_MULTILINE.replace("count: 3", "count: 4")
+    assert targets["p"].read_text(encoding="utf-8") == expected
+
+
+def test_changing_one_line_of_a_multiline_value_without_a_type_keeps_the_other_line_breaks(
+    open_page, repo
+):
+    # #383：改第二行、第一行與換行照舊。語意與檔案分開看：重新解析寫出檔，值是改過的兩行；
+    # 被改那個值在檔案裡怎麼寫由函式庫決定（T6），不逐字要求，但它前後沒改的行逐位元組不變。
+    targets = _listing_many(repo, {"p": _UNKNOWN_MULTILINE})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("notes[1]"), "line one\nline three\n")
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    written = targets["p"].read_text(encoding="utf-8")
+    meaning = core_parse.values(core_parse.parse(written, "yaml"))
+    untouched = (written.startswith("notes:\n  - 1\n"), written.endswith("count: 3\n"))
+    expected = {"notes": [1, "line one\nline three\n"], "count": 3}
+    assert (meaning, untouched) == (expected, (True, True))
+
+
+def test_a_saved_multiline_value_without_a_type_comes_back_the_same_after_reopening(
+    open_page, repo
+):
+    # #383：存成草稿、重新整理、重新展開——顯示的仍是含換行的那個值。
+    _listing_many(repo, {"p": _UNKNOWN_MULTILINE})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("notes[1]"), "line one\nline three\n")
+    _save_and_wait(page)
+    page.reload()
+    page.dblclick(f"[data-testid='tree-item-{_PARAM_UID}']")
+    page.wait_for_selector(f"[data-testid='panel-{_PARAM_UID}']", state="visible")
+
+    assert page.input_value(_param_value("notes[1]")) == "line one\nline three\n"
 
 
 def test_list_controls_are_absent_while_read_only(open_page, repo):
