@@ -3750,7 +3750,7 @@ def test_adopt_of_an_invalid_target_is_refused_with_the_line_and_nothing_changes
     ("name", "edited", "expected"),
     [
         ("drift_tab.yaml", b"count: 7\nnested:\n\tb: 1\n", ("line", 3)),
-        ("drift_trailing.yaml", b"count: 7   \n", ("line", 1)),
+        ("drift_trailing.yaml", b"count: 7\nspeed: 1.5   \n", ("line", 2)),
         # 重複 key 要列出所有出現的行號，在 `lines`；其餘問題只有一個行號，在 `line`。
         ("drift_duplicate.yaml", b"count: 7\nspeed: 1.5\ncount: 8\n", ("lines", [1, 3])),
     ],
@@ -3760,7 +3760,7 @@ def test_a_target_with_a_text_level_violation_is_refused_at_adoption_naming_the_
 ):
     # v0.3.0 檢查點 4「在文字層面注入 Tab 縮排、尾隨空白、重複 key 皆被攔截並指出行號（重複 key
     # 須列出所有出現行號）」（#353）：納入目標現況是文字進到來源的入口；這三種在核心層驗過，
-    # 這裡在寫入點實際注入。yes 那一種由上一則驗。
+    # 這裡在寫入點實際注入，而且都不在第一行。yes 那一種由上一則驗。
     entry = _drifted(api, sources_root, name, edited=edited)
 
     with pytest.raises(urllib.error.HTTPError) as exc:
