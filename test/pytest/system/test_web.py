@@ -2819,7 +2819,10 @@ def test_adding_a_prefix_with_dotdot_is_rejected_with_the_reason_shown(open_page
 
 def test_a_prefix_with_dotdot_is_not_added_to_the_whitelist(open_page, tmp_path):
     # v0.2.0 檢查點 4 的加入白名單前綴那一半（#353）：上一則只等錯誤出現；TEST-PLAN 那一列另要求
-    # 「不靜默加入」——寫的那串與正規化之後的那串，清單裡都沒有。
+    # 「不靜默加入」——寫的那串與正規化之後的那串，清單裡都沒有。兩個目錄都先建好：被拒的原因只能
+    # 是 `..`，不會是「目錄不存在」（突變檢查抓到的：沒建目錄時，拿掉 `..` 的檢查這一則照樣綠）。
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "escape").mkdir()
     page = _open_whitelist_as_developer(open_page())
     typed = str(tmp_path / "sub" / ".." / "escape")
 
@@ -2827,11 +2830,12 @@ def test_a_prefix_with_dotdot_is_not_added_to_the_whitelist(open_page, tmp_path)
     page.get_by_role("button", name="加入白名單").click()
     page.wait_for_selector("[data-testid='whitelist-error']", state="visible")
 
+    reason = page.inner_text("[data-testid='whitelist-error']")
     listed = [
         page.query_selector(f"[data-testid='whitelist-root-{prefix}']")
         for prefix in (typed, str(tmp_path / "escape"))
     ]
-    assert listed == [None, None]
+    assert (".." in reason, listed) == (True, [None, None])
 
 
 def test_removing_a_root_asks_for_confirmation_then_removes(open_page, browse_root):
