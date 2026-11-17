@@ -1144,6 +1144,15 @@ def test_onboarding_without_a_saved_default_hostname_is_refused_and_writes_nothi
     ) == (_CONFLICT, True, head)
 
 
+def test_without_a_saved_default_hostname_existing_configs_are_still_listed(host_name_service):
+    # 還沒設定時只擋需要名稱的納管：既有資料照常（維護者 11/17）。
+    _with_entries(host_name_service, "amr01")
+
+    rows = _get(host_name_service.url, "/api/configs")
+
+    assert [row["uid"] for row in rows] == ["mfz3k9e0"]
+
+
 def test_inspect_reports_a_missing_default_hostname(host_name_service, sources_root):
     source = _write_source(sources_root, "inspect_no_default.yaml", b"a: 1\n")
 

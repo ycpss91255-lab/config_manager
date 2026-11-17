@@ -304,6 +304,12 @@ host_name_candidate() {
   [[ "$(docker inspect --format '{{range .Mounts}}{{.Destination}} {{end}}' "${BACKEND}")" != *"/run/config_manager"* ]] \
     || fail "執行期目錄 /run/config_manager 出現在容器的掛載清單裡" "它要在容器自己的可寫層，檢查 compose 檔的 volumes／tmpfs"
   ok "執行期目錄不在容器實際的掛載清單裡"
+
+  local modes
+  modes="$(docker exec "${BACKEND}" stat -c '%a %U' /run/config_manager /run/config_manager/start-id /run/config_manager/host-candidate.json | tr '\n' '|')"
+  [[ "${modes}" == "700 user|600 user|600 user|" ]] \
+    || fail "執行期目錄與裡面的檔是「${modes}」，預期 700／600 且由服務使用者 user 擁有" "檢查 Dockerfile 預建 /run/config_manager 的那一步與寫檔時的權限"
+  ok "執行期目錄由服務使用者擁有、0700，識別碼檔與候選檔 0600"
 }
 
 stops_in_time() {
