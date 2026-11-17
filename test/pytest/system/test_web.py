@@ -36,6 +36,7 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import socket
 import subprocess
 import threading
@@ -395,6 +396,21 @@ def test_every_entry_carries_the_state_the_backend_reported(open_page, listing):
     )
 
     assert states == ["in_sync", "drift", "missing"]
+
+
+def test_each_state_is_shown_in_a_colour_of_its_own(open_page, listing):
+    # v0.5.0 檢查點 2「三種狀態在左側樹上以色點正確彙總」的「色點」（#353）：上一則讀的是
+    # data-state；這裡讀畫出來的顏色——一致、偏離、未部署三個點的背景色各不相同。只比顏色彼此
+    # 不同，不比是哪一個色碼（顏色由 CSS 變數決定，換主題不該讓規格轉紅）。
+    listing("a", "b", "c")
+    page = _enter_identity(open_page())
+
+    colours = page.eval_on_selector_all(
+        "[data-testid='status-dot']",
+        "nodes => nodes.map(node => getComputedStyle(node).backgroundColor)",
+    )
+
+    assert len(set(colours)) == len(colours) == len(_DEPLOYED)  # 三份各一個點，顏色互不相同
 
 
 def test_each_state_is_spelled_the_way_context_spells_it(open_page, listing):
@@ -2965,6 +2981,21 @@ def test_a_bool_parameter_is_a_checkbox_reflecting_its_value(open_page, repo):
     assert not page.is_checked(_param_value("verbose"))
 
 
+def test_toggling_a_bool_checkbox_writes_a_boolean(open_page, repo):
+    # v0.3.0 檢查點 3「bool 欄位是核取方塊，結構上無法輸入非布林值」（#353）：上一則只看控制項是
+    # 核取方塊；這裡真的切換它、存草稿、進版，寫出去的是布林值 false，不是字串或別的寫法。
+    targets = _listing_many(repo, {"p": "enabled: true\ncount: 1\n"})
+    page = _open_panel(open_page())
+
+    page.uncheck(_param_value("enabled"))
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    assert targets["p"].read_text(encoding="utf-8") == "enabled: false\ncount: 1\n"
+
+
 def test_an_int_parameter_rejects_a_decimal_and_says_why(open_page, repo):
     # AC3：整數步進的數字框；打小數→該列標錯並說原因，打整數→恢復。
     _listing_with(repo, "count: 3\n")
@@ -3408,6 +3439,23 @@ def test_a_saved_multiline_value_without_a_type_comes_back_the_same_after_reopen
     assert page.input_value(_param_value("notes[1]")) == "line one\nline three\n"
 
 
+def test_an_element_added_to_an_empty_list_is_edited_as_text_and_marked_unstructured(
+    open_page, repo
+):
+    # v0.8.0 檢查點 3「型別未知的項目退回文字區塊並明確標示為未結構化編輯」（#353）：型別未知
+    # 是 null 與空清單的元素（UI-ELEMENTS）；上一則只驗了 null。空清單按 ＋ 新增的元素沒有型別
+    # 可依：控制項是文字框，那一列標「未結構化編輯」。
+    _listing_many(repo, {"p": "tags: []\ncount: 3\n"})
+    page = _open_panel(open_page())
+
+    page.click(f"{_row('tags')} [data-testid='list-add']")
+    badge = f"{_row('tags[0]')} [data-testid='param-unstructured']"
+    page.wait_for_selector(badge)
+
+    control = page.get_attribute(_param_value("tags[0]"), "type")
+    assert ("未結構化" in page.inner_text(badge), control) == (True, "text")
+
+
 def test_list_controls_are_absent_while_read_only(open_page, repo):
     # 唯讀分頁：增刪調序鈕都是會寫入的控制項，不出現。
     _listing_many(repo, {"p": _LIST_YAML})
@@ -3621,6 +3669,28 @@ def test_an_integer_typed_into_a_double_field_stays_a_double(open_page, repo):
     page.click("[data-testid='promote-all']")
     page.wait_for_selector("[data-testid='promote-done']", state="visible")
     assert targets["p"].read_text(encoding="utf-8") == "max_vel: 2.0\n"
+
+
+def test_changing_a_double_keeps_the_comments_and_the_untouched_fields_as_they_were(
+    open_page, repo
+):
+    # v0.3.0 檢查點 2「從介面修改一個 double 參數後進版，寫出的值帶小數點；註解與未修改欄位的格式
+    # 完全保留」（#353）：上一則的檔只有一個欄位、沒有註解。被改的那一行，註解前的空白縮成一個，
+    # 那是 T6 記下的唯一正規化（維護者 11/17 同意註明這個邊界）；其餘逐位元組不變。
+    original = "# nav2 的速度上限\nmax_vel: 0.8  # m/s\nname: 'amr'  # 引號要留著\nretries: 3\n"
+    targets = _listing_many(repo, {"p": original})
+    page = _open_panel(open_page())
+
+    page.fill(_param_value("max_vel"), "2")
+    page.dispatch_event(_param_value("max_vel"), "change")
+    _save(page)
+    page.wait_for_selector(_draft_dot(_PARAM_UID), state="visible")
+    page.click("[data-testid='promote-all']")
+    page.wait_for_selector("[data-testid='promote-done']", state="visible")
+
+    assert targets["p"].read_text(encoding="utf-8") == (
+        "# nav2 的速度上限\nmax_vel: 2.0 # m/s\nname: 'amr'  # 引號要留著\nretries: 3\n"
+    )
 
 
 def test_an_enum_field_offers_only_the_choices_from_the_schema(open_page, repo):
@@ -5316,6 +5386,39 @@ def test_group_nodes_roll_up_the_most_severe_state_of_their_children(open_page, 
     assert (nav, ungrouped) == ("in_sync", "drift")
 
 
+def test_a_group_with_a_missing_child_rolls_up_to_missing_not_in_sync(open_page, listing, repo):
+    # 上一則驗了「偏離 > 未部署」；「未部署 > 一致」沒有同一個父節點驗過（v0.5.0 檢查點 2、
+    # v0.6.0 檢查點 1，#353）：navigation 群組裡放 a（一致）與 c（未部署）→ 群組是未部署。
+    listing("a", "c")
+    listed = repo / "config-list.toml"
+    listed.write_text(
+        listed.read_text(encoding="utf-8").replace("groups   = []", 'groups   = ["navigation"]'),
+        encoding="utf-8",
+    )
+    page = _enter_identity(open_page())
+
+    state = page.get_attribute(
+        "[data-testid='tree-group-navigation'] [data-testid='group-status-dot']", "data-state"
+    )
+
+    assert state == "missing"
+
+
+def test_a_host_node_rolls_up_the_most_severe_state_of_its_configs(open_page, listing):
+    # 依主機排列時，主機節點也彙總最嚴重的狀態（v0.6.0 檢查點 1「父節點彙總最嚴重狀態」，#353）：
+    # amr01 底下有一致、偏離、未部署各一份 → 主機節點是偏離。原本只驗了全部一致的主機。
+    listing("a", "b", "c")
+    page = _enter_identity(open_page())
+    page.select_option("[data-testid='tree-layout']", "host")
+    page.wait_for_selector("[data-testid='tree-host-amr01']")
+
+    state = page.get_attribute(
+        "[data-testid='tree-host-amr01'] > h2 [data-testid='group-status-dot']", "data-state"
+    )
+
+    assert state == "drift"
+
+
 # ── W6 單一編輯階段（#33）────────────────────────────────────────────────────
 # 一次只允許一個編輯階段（§7.2.2、ADR-00000014）：第二個分頁唯讀、指名持有者與開始時間；會寫入的
 # 控制項不出現（不是停用）；不提供強制接管。
@@ -5337,6 +5440,28 @@ def test_a_second_tab_is_read_only_and_names_the_holder(open_page, listing):
     second.wait_for_selector("[data-testid='panel-mfz3k9q1']", state="visible")
     assert second.is_hidden("[data-testid='panel-save']")
     assert holder.is_visible("[data-testid='promote-all']")  # 持有者不受影響
+
+
+def test_the_read_only_banner_shows_when_the_holder_started_editing(open_page, listing):
+    # v0.6.0 檢查點 2「指名持有者與開始時間」的開始時間（#353）：上一則只看「起編輯中」幾個字，
+    # 時間是空的或錯的照樣會過。期望值不照頁面的格式化再算一次（那會跟著頁面一起錯）：橫幅上的
+    # 時間要落在持有者打開頁面之前、讀到橫幅之後這段之間。
+    listing("a")
+    before = datetime.datetime.now(datetime.UTC).replace(microsecond=0)
+    holder = _enter_identity(open_page())
+    holder.wait_for_selector("[data-testid='promote-all']", state="visible")
+    second = open_page(same_browser_as=holder)
+    second.wait_for_selector("[data-testid='readonly-banner']", state="visible")
+    banner = second.inner_text("[data-testid='readonly-banner']")
+    after = datetime.datetime.now(datetime.UTC)
+
+    shown = re.search(r"自 (\d{4})/(\d{1,2})/(\d{1,2}) (\d{1,2}):(\d{2}):(\d{2}) 起編輯中", banner)
+    year, month, day, hour, minute, second_of = (int(part) for part in shown.groups())
+    # hour12: false 在有的瀏覽器把午夜寫成 24 點（同一天），取 24 的餘數。
+    local = datetime.datetime(year, month, day, hour % 24, minute, second_of, tzinfo=datetime.UTC)
+    offset = second.evaluate("new Date().getTimezoneOffset()")  # 分鐘，UTC 減瀏覽器所在時區
+    started = local + datetime.timedelta(minutes=offset)
+    assert before <= started <= after
 
 
 def test_entering_another_identity_while_someone_holds_the_session_is_read_only(open_page, listing):
@@ -6781,6 +6906,25 @@ def test_three_configs_can_be_expanded_at_once_and_saved_independently(open_page
     assert page.is_visible("[data-testid='panel-mfz3k9q3']")
 
 
+def test_saving_one_expanded_config_leaves_another_edited_one_unsaved(open_page, repo):
+    # v0.6.0 檢查點 1「各自儲存」（#353）：上一則只改了一塊，另外兩塊本來就沒有改動，分不出是
+    # 逐塊儲存還是一次存全部。這裡兩塊都改、只存一塊：另一塊沒有草稿，改到一半的值還在。
+    _listing_many(repo, {"a": "count: 1\n", "b": "speed: 2\n"})
+    page = _enter_identity(open_page())
+    for uid in ("mfz3k9q1", "mfz3k9q2"):
+        page.dblclick(f"[data-testid='tree-item-{uid}']")
+        page.wait_for_selector(f"[data-testid='panel-{uid}']", state="visible")
+    count = "[data-testid='panel-mfz3k9q1'] [data-testid='param-count'] [data-testid='param-value']"
+    speed = "[data-testid='panel-mfz3k9q2'] [data-testid='param-speed'] [data-testid='param-value']"
+    page.fill(count, "5")
+    page.fill(speed, "3")
+
+    _save(page, "mfz3k9q2")
+    page.wait_for_selector(_draft_dot("mfz3k9q2"), state="visible")
+
+    assert (page.query_selector(_draft_dot("mfz3k9q1")), page.input_value(count)) == (None, "5")
+
+
 def test_a_panel_collapses_on_its_header_and_can_be_closed(open_page, listing):
     listing("a", "b")
     page = _enter_identity(open_page())
@@ -6844,6 +6988,23 @@ def test_searching_a_parameter_name_lists_the_configs_that_have_it_and_locates_t
     page.dblclick("[data-testid='tree-item-mfz3k9q1']")
     page.wait_for_selector("[data-testid='param-max_vel'][data-hit='true']")
     assert page.get_attribute("[data-testid='param-rate']", "data-hit") is None
+
+
+def test_searching_a_parameter_name_lists_every_config_that_has_it(open_page, repo):
+    # v0.6.0 檢查點 1「搜尋 max_vel 能列出**所有**含該參數的 config」（#353）：上一則的樣本只有
+    # 一份含 max_vel。這裡兩份都有、第三份沒有：兩份都留著，第三份被濾掉。
+    _listing_many(repo, {
+        "nav2": "max_vel: 0.8\nrate: 10\n",
+        "nav2_backup": "max_vel: 1.2\n",
+        "plain": "count: 1\n",
+    })
+    page = _enter_identity(open_page())
+
+    page.fill("[data-testid='search-input']", "max_vel")
+    page.wait_for_selector("[data-testid='tree-item-mfz3k9q3']", state="detached")
+
+    item = "[data-testid='tree-item-{}']"
+    assert [page.is_visible(item.format(uid)) for uid in ("mfz3k9q1", "mfz3k9q2")] == [True, True]
 
 
 def test_searching_a_value_finds_the_parameter_holding_it(open_page, repo):

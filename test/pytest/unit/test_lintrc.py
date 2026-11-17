@@ -42,6 +42,12 @@ def test_the_default_rules_match_the_canonical_form_whitelist():
         assert _severities(text, lintrc=rules_for(DEFAULT, "yaml", "files/x.yaml")) == [ERROR], text
 
 
+def test_a_tab_indent_is_an_error_under_the_default_rules():
+    # v0.3.0 檢查點 4「Tab 縮排被攔截」（#353）：沒有 .lintrc.toml 時，Tab 縮排是 ERROR（第 1 層
+    # 硬擋），不是 WARNING。上一則的預設值樣本裡沒有 Tab；Tab 只在把縮排寬度改成 3 時驗過。
+    assert _severities("a:\n\tb: 1\n") == [ERROR]
+
+
 def test_the_default_text_parses_back_to_the_defaults():
     # 文件裡附的範例檔要真的是預設值——兩份漂移就會有人照範例改卻看不到差別。
     assert parse_lintrc(default_text()) == DEFAULT

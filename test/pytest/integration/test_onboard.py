@@ -11,7 +11,9 @@ git（T7）串起來。它不算出新的值，效果全都透過既有介面觀
 整合層：這裡真的碰檔案系統與 git。
 """
 
+import grp
 import os
+import pwd
 import re
 import subprocess
 
@@ -246,6 +248,58 @@ def test_permissions_record_the_original_mode(tmp_path):
     entry = onboard(str(repo), _request(root, path), _AUTHOR)
 
     assert entry.permissions.mode == "0640"
+
+
+def _listed(repo):
+    """清單檔裡的條目，以 uid 索引——讀回寫進檔案的那一份，不是 onboard 回傳的物件。"""
+    text = (repo / CONFIG_LIST_NAME).read_text(encoding="utf-8")
+    return {entry.uid: entry for entry in load(text).files}
+
+
+def test_the_config_list_records_the_original_owner_and_group(tmp_path):
+    # v0.2.0 檢查點 1「正確記錄原始 owner／group／mode」的 owner／group 那一半（#353）：要寫進清單檔
+    # 的那一筆。期望值取自來源檔的 stat，不取自 read_source——它讀對了、接線卻寫成 defaults 的
+    # root／root，照樣會過。名字查得到就是名字、查不到就是數字，兩種都要指回同一個 uid／gid。
+    repo = _repo(tmp_path)
+    root, path = _source(tmp_path)
+    info = os.stat(path)
+
+    entry = onboard(str(repo), _request(root, path), _AUTHOR)
+
+    recorded = _listed(repo)[entry.uid].permissions
+    owner = int(recorded.owner) if recorded.owner.isdigit() else pwd.getpwnam(recorded.owner).pw_uid
+    group = int(recorded.group) if recorded.group.isdigit() else grp.getgrnam(recorded.group).gr_gid
+    assert (owner, group) == (info.st_uid, info.st_gid)
+
+
+def test_the_config_list_records_the_hostname_read_at_onboarding(tmp_path, monkeypatch):
+    # v0.2.0 檢查點 1「hostname 自動填入且寫進檔案」（#353）：清單檔那一筆的 hostname 就是納管當下
+    # 讀到的那一個（這裡由 CM_HOSTNAME 給定，#178），來源複本也放在它底下。
+    monkeypatch.setenv("CM_HOSTNAME", "amr07")
+    repo = _repo(tmp_path)
+    root, path = _source(tmp_path)
+
+    entry = onboard(str(repo), _request(root, path), _AUTHOR)
+
+    recorded = _listed(repo)[entry.uid]
+    assert (recorded.hostname, recorded.source.split("/")[:2]) == ("amr07", ["files", "amr07"])
+
+
+def test_a_later_hostname_change_leaves_an_onboarded_entry_as_recorded(tmp_path, monkeypatch):
+    # 不變式 8：hostname 納管時寫進檔案、之後永不再讀（v0.2.0 檢查點 1「重跑不因環境改變而變動」，
+    # #353）。換了環境（CM_HOSTNAME 換掉）之後再納管另一份、清單檔整份重寫，已存那一筆不變。
+    _fixed_uids(monkeypatch, "aaaaaaaa", "bbbbbbbb")
+    repo = _repo(tmp_path)
+    root, first = _source(tmp_path, name="first.yaml")
+    _, second = _source(tmp_path, name="second.yaml")
+    monkeypatch.setenv("CM_HOSTNAME", "amr07")
+    entry = onboard(str(repo), _request(root, first), _AUTHOR)
+
+    monkeypatch.setenv("CM_HOSTNAME", "amr08")
+    onboard(str(repo), _request(root, second), _AUTHOR)
+
+    kept = _listed(repo)["aaaaaaaa"]
+    assert (kept.hostname, kept.source) == ("amr07", entry.source)
 
 
 def test_a_commit_is_recorded_with_the_import_kind(tmp_path):
