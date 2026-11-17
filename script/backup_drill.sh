@@ -310,7 +310,9 @@ restores_and_compares_again() {
     || fail "還原後從介面加的白名單根目錄不見了" "檢查 allowed-roots.toml 有沒有提交進設定庫"
   [[ "$(call GET /api/configs | json 'len(d)')" == "3" ]] \
     || fail "還原後清單不是三份" "檢查 config-list.toml 有沒有跟著備份回來"
-  ok "還原後 HEAD ${GOOD_HEAD}：清單三份、keep 已進版的值 2.5、歷史 ${HISTORY_BEFORE} 筆、白名單都回來"
+  [[ "$(call GET /api/host-name | json 'd["saved"]')" == "drill-host" ]] \
+    || fail "還原後新納管預設主機名稱不是備份時保存的 drill-host" "檢查 config-list.toml 的 [defaults] hostname 有沒有跟著備份回來"
+  ok "還原後 HEAD ${GOOD_HEAD}：清單三份、keep 已進版的值 2.5、歷史 ${HISTORY_BEFORE} 筆、白名單、新納管預設主機名稱都回來"
 
   STEP="重新比對"
   local states
