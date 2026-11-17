@@ -9,6 +9,7 @@ from pathlib import PurePosixPath
 import tomlkit
 from tomlkit import items
 
+from config_manager.core.attributes import is_safe_hostname
 from config_manager.core.errors import (
     ConfigListMalformed,
     DumpMismatch,
@@ -16,9 +17,11 @@ from config_manager.core.errors import (
     DuplicateTarget,
     DuplicateUid,
     InvalidFormat,
+    MissingHostname,
     SourceEscape,
     TargetEscape,
     UnknownField,
+    UnsafeDefaultHostname,
 )
 from config_manager.core.models import ConfigList, FileEntry, Permissions
 from config_manager.core.toml_support import (
@@ -39,7 +42,7 @@ ALLOWED_FORMATS = ("yaml", "json", "toml", "ini", "raw")
 
 # 允許的鍵集（用清單檔的鍵名，含 schema 別名）。不含 warnings 等內部欄位。
 _TOP_KEYS = {"list_version", "defaults", "files"}
-_DEFAULTS_KEYS = {"permissions"}
+_DEFAULTS_KEYS = {"permissions", "hostname"}
 _PERM_KEYS = {"owner", "group", "mode"}
 _ENTRY_KEYS = {
     "uid", "name", "hostname", "source", "target", "format", "groups",
@@ -56,6 +59,7 @@ def load(text: str) -> ConfigList:
     doc = tomlkit.parse(text)
     _check_shape(doc)
     _check_unknown_fields(doc, text)
+    _check_entry_hostnames(doc)
     config_list = ConfigList.model_validate(doc.unwrap())
     _check_integrity(config_list)
     return config_list
@@ -78,6 +82,7 @@ def dump(config_list: ConfigList, original: str) -> str:
     """
     _check_integrity(config_list)
 
+    original = _with_default_hostname(original, config_list.defaults.hostname)
     doc = tomlkit.parse(original)
     files = table_array(doc, "files", bool(config_list.files))
     if files is None:
@@ -107,6 +112,84 @@ def dump(config_list: ConfigList, original: str) -> str:
         drop_if_emptied(doc, files)
 
     return tomlkit.dumps(doc)
+
+
+# `[defaults]` 表頭那一行，與 `[defaults.<子表>]` 表頭那一行（#385 的預設主機名稱要插在哪）。
+_DEFAULTS_HEADER = re.compile(r"[ \t]*\[[ \t]*defaults[ \t]*\][ \t]*(#.*)?")
+_DEFAULTS_SUBTABLE_HEADER = re.compile(r"[ \t]*\[[ \t]*defaults[ \t]*\.")
+
+
+def _with_default_hostname(original: str, wanted: str | None) -> str:
+    """把 `[defaults] hostname` 改成 `wanted`，其餘逐位元組不變（#385）。
+
+    改動既有的值交給 tomlkit 就地換掉（行內註解與間距跟著舊值保留，同 `_update_table`）。
+    **由無變有**則以文字插入：首次啟動的種子只有 `[defaults.permissions]`，沒有 `[defaults]`
+    表頭，tomlkit 對這種隱含的父表加一個鍵時放在哪裡、帶不帶空行不是它承諾的行為——依賴它，
+    輸出就隨版本而變（同 toml_support「沒有條目時的寫法」的理由）。所以：有 `[defaults]` 表頭就接在
+    它下一行；只有子表就把 `[defaults]` 與這一鍵放在第一個子表（連同它上方的註解）之前。插入後
+    重新解析、與預期的資料比對，對不上（例如表頭字樣出現在多行字串裡）才退回 tomlkit 自己放。
+    """
+    doc = tomlkit.parse(original)
+    defaults = doc.get("defaults")
+    current = defaults.get("hostname") if defaults is not None else None
+    if (None if current is None else str(current)) == wanted:
+        return original
+    if defaults is not None and current is not None:
+        if wanted is None:
+            del defaults["hostname"]
+        else:
+            defaults["hostname"] = wanted
+        return tomlkit.dumps(doc)
+    if wanted is None:
+        return original
+
+    expected = doc.unwrap()
+    expected.setdefault("defaults", {})["hostname"] = wanted
+    inserted = _insert_default_hostname(original, wanted)
+    if inserted is not None and tomlkit.parse(inserted).unwrap() == expected:
+        return inserted
+    if defaults is None:
+        doc["defaults"] = {"hostname": wanted}
+    else:
+        defaults["hostname"] = wanted
+    return tomlkit.dumps(doc)
+
+
+def _insert_default_hostname(original: str, wanted: str) -> str | None:
+    """以文字把 `hostname = …` 放進 `[defaults]`；找不到放的位置回 None。"""
+    line = f"hostname = {tomlkit.item(wanted).as_string()}\n"
+    lines = original.splitlines(keepends=True)
+    for index, text in enumerate(lines):
+        if _DEFAULTS_HEADER.fullmatch(text.rstrip("\r\n")):
+            lines.insert(index + 1, line)
+            return "".join(lines)
+    for index, text in enumerate(lines):
+        if _DEFAULTS_SUBTABLE_HEADER.match(text):
+            start = index
+            while start > 0 and lines[start - 1].lstrip().startswith("#"):
+                start -= 1
+            lines[start:start] = ["[defaults]\n", line, "\n"]
+            return "".join(lines)
+    return None
+
+
+def _check_entry_hostnames(doc: "tomlkit.TOMLDocument") -> None:
+    """每一筆條目都要有自己的 hostname；缺了指名是哪一筆，不以 `[defaults] hostname` 補上（#385）。
+
+    在轉模型之前擋：pydantic 的「Field required」只說得出第幾筆（`files.0.hostname`），說不出
+    uid，使用者對不回是哪一份 config。
+    """
+    files = doc.get("files")
+    if not isinstance(files, items.AoT):
+        return
+    for table in files:
+        if "hostname" not in table:
+            uid = table.get("uid", "（這一筆也沒有 uid）")
+            raise MissingHostname(
+                f"清單檔 config-list.toml 裡 uid「{uid}」的條目沒有 hostname。"
+                "既有條目的身分只來自它自己那一筆，不會以 [defaults] hostname 補上。"
+                "下一步：在那一筆補上它納管時那台機器的名稱（hostname = \"…\"）"
+            )
 
 
 def _check_shape(doc: "tomlkit.TOMLDocument") -> None:
@@ -320,6 +403,13 @@ def _update_table(table: items.Table, entry: FileEntry) -> None:
 
 def _check_integrity(config_list: ConfigList) -> None:
     """跨條目的完整性檢查。硬錯誤丟具名例外，軟問題收進 warnings。"""
+    default_hostname = config_list.defaults.hostname
+    if default_hostname is not None and not is_safe_hostname(default_hostname):
+        raise UnsafeDefaultHostname(
+            f"清單檔 config-list.toml 的 [defaults] hostname「{default_hostname}」不是安全的名稱。"
+            "它會成為新條目的 hostname，寫進 files/<hostname>/ 的路徑與變更紀錄的主旨。"
+            "下一步：改成這台機器的正規名稱（只用英數字、.、_、-，例如 amr01）"
+        )
     seen_uid: dict[str, FileEntry] = {}
     seen_target: dict[str, FileEntry] = {}
     seen_source: dict[str, FileEntry] = {}
