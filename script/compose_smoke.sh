@@ -306,8 +306,13 @@ host_name_candidate() {
   ok "執行期目錄不在容器實際的掛載清單裡"
 
   local modes
-  modes="$(docker exec "${BACKEND}" stat -c '%a %U' /run/config_manager /run/config_manager/start-id /run/config_manager/host-candidate.json | tr '\n' '|')"
-  [[ "${modes}" == "700 user|600 user|600 user|" ]] \
+  # 權限與擁有者在容器裡讀（容器裡的 Python），不用 stat 的旗標——GNU 與 BSD 的寫法不同。
+  modes="$(docker exec "${BACKEND}" python -c '
+import os, pwd, sys
+print("|".join(
+    f"{os.stat(p).st_mode & 0o777:o} {pwd.getpwuid(os.stat(p).st_uid).pw_name}" for p in sys.argv[1:]
+))' /run/config_manager /run/config_manager/start-id /run/config_manager/host-candidate.json)"
+  [[ "${modes}" == "700 user|600 user|600 user" ]] \
     || fail "執行期目錄與裡面的檔是「${modes}」，預期 700／600 且由服務使用者 user 擁有" "檢查 Dockerfile 預建 /run/config_manager 的那一步與寫檔時的權限"
   ok "執行期目錄由服務使用者擁有、0700，識別碼檔與候選檔 0600"
 }
