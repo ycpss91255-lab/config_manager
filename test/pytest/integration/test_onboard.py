@@ -27,6 +27,7 @@ from config_manager.io.errors import (
     TargetNotWritable,
 )
 from config_manager.io.git import history
+from config_manager.io.default_hostname import save_default_hostname
 from config_manager.io.onboard import OnboardRequest, onboard
 from config_manager.io.preflight import CONFIG_LIST_NAME
 from config_manager.io.source import service_identity
@@ -272,11 +273,12 @@ def test_the_config_list_records_the_original_owner_and_group(tmp_path):
     assert (owner, group) == (info.st_uid, info.st_gid)
 
 
-def test_the_config_list_records_the_hostname_read_at_onboarding(tmp_path, monkeypatch):
-    # v0.2.0 檢查點 1「hostname 自動填入且寫進檔案」（#353）：清單檔那一筆的 hostname 就是納管當下
-    # 讀到的那一個（這裡由 CM_HOSTNAME 給定，#178），來源複本也放在它底下。
-    monkeypatch.setenv("CM_HOSTNAME", "amr07")
+def test_the_config_list_records_the_saved_default_hostname_at_onboarding(tmp_path):
+    # v0.2.0 檢查點 1「hostname 自動填入且寫進檔案」（#353）：#385 起納管當下填入的是清單檔已保存
+    # 的新納管預設主機名稱（維護者 11/17：名字只來自明確保存的設定），寫進那一筆，來源複本也放在
+    # 它底下。
     repo = _repo(tmp_path)
+    save_default_hostname(str(repo), "amr07", _AUTHOR)
     root, path = _source(tmp_path)
 
     entry = onboard(str(repo), _request(root, path), _AUTHOR)
@@ -285,21 +287,26 @@ def test_the_config_list_records_the_hostname_read_at_onboarding(tmp_path, monke
     assert (recorded.hostname, recorded.source.split("/")[:2]) == ("amr07", ["files", "amr07"])
 
 
-def test_a_later_hostname_change_leaves_an_onboarded_entry_as_recorded(tmp_path, monkeypatch):
+def test_a_later_change_of_environment_or_default_leaves_an_onboarded_entry_as_recorded(
+    tmp_path, monkeypatch
+):
     # 不變式 8：hostname 納管時寫進檔案、之後永不再讀（v0.2.0 檢查點 1「重跑不因環境改變而變動」，
-    # #353）。換了環境（CM_HOSTNAME 換掉）之後再納管另一份、清單檔整份重寫，已存那一筆不變。
+    # #353）。之後環境裡多了一個舊的 CM_HOSTNAME、預設名稱也改了，再納管另一份、清單檔整份重寫：
+    # 已存那一筆不變；新的那一筆用改過的預設名稱，不用環境變數。
     _fixed_uids(monkeypatch, "aaaaaaaa", "bbbbbbbb")
     repo = _repo(tmp_path)
     root, first = _source(tmp_path, name="first.yaml")
     _, second = _source(tmp_path, name="second.yaml")
-    monkeypatch.setenv("CM_HOSTNAME", "amr07")
+    save_default_hostname(str(repo), "amr07", _AUTHOR)
     entry = onboard(str(repo), _request(root, first), _AUTHOR)
 
     monkeypatch.setenv("CM_HOSTNAME", "amr08")
+    save_default_hostname(str(repo), "amr09", _AUTHOR)
     onboard(str(repo), _request(root, second), _AUTHOR)
 
-    kept = _listed(repo)["aaaaaaaa"]
-    assert (kept.hostname, kept.source) == ("amr07", entry.source)
+    listed = _listed(repo)
+    kept, added = listed["aaaaaaaa"], listed["bbbbbbbb"]
+    assert (kept.hostname, kept.source, added.hostname) == ("amr07", entry.source, "amr09")
 
 
 def test_a_commit_is_recorded_with_the_import_kind(tmp_path):
