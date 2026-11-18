@@ -12,7 +12,10 @@
    CM_TARGET_ROOT=/opt/robot/config
    ```
 
-   這個目錄要先存在。它同時決定「掛進容器的是什麼」與「白名單放行什麼」。
+   這個目錄要先存在。它同時決定「掛進容器的是什麼」與「白名單放行什麼」。`just docker run` 起之前
+   會檢查它在不在；檢查的是 `docker compose config` 解出來的那一個，與 compose 實際掛載的相同——
+   shell 的環境變數優先於 `.env`，兩者都沒設才用預設的 `/opt/robot/config`。訊息會寫出採用的目錄與
+   它的來源（#388）。
 
 2. 建置並啟動：
 
