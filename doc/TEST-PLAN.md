@@ -861,6 +861,9 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 | 建好的 `runtime` 映像裡 import 不到任何測試工具（`dependencies.bats` 只看文字，這裡看映像本身） |
 | **（#356）設了 `CM_CI_KEY`：compose 專案名就是鍵；映像是 `config_manager:runtime-<鍵>`；容器名是 `config_manager_backend-<鍵>`、`config_manager_frontend-<鍵>`、`cm_smoke_control-<鍵>`；這一輪建立的映像、容器與資料卷都帶 `cm.ci.owner=<鍵>`（`docker inspect` 核對）** |
 | **（#356）清理只處理本次擁有的資源**：`compose-smoke` job 先在同一個 daemon 上建立四組帶別的鍵的同類資源——另一個 run、另一個 attempt、另一個 job，以及以本次的鍵開頭的另一個鍵（擋住用名稱前綴或子字串挑資源的清理）——各有映像、容器、資料卷；這支跑完之後它們都還在、識別不變（`script/ci_bystanders.sh`） |
+| **（#392）開發模式從零起一次**（`compose.yaml` 加 `compose.dev.yaml`，設定庫的資料卷事先不存在）：經 `script/run.sh` 起服務（與 `just docker dev run` 同一條路）的結束碼是 0，後端實際就緒、`/api/mode` 回 `development`——只核對掛載點的擁有者不算 |
+| **（#392）開發模式下兩個容器都以非 root 執行**（容器裡程序的 uid 不是 0），沒有 `privileged`、沒有加 capability |
+| **（#392）開發模式下既有的資料卷照原樣沿用**：在設定庫留一個 commit，`docker compose down`（不帶 `--volumes`）之後再經 `script/run.sh` 起一次，HEAD 仍是那個 commit |
 
 **兩個位置回答的是不同的問題，結果分開報，不互相代替。** 設定解析過了，說的是「compose 會照這樣起服務」；
 它說不出「這樣起的服務真的只有本機連得到」——那要有一個真的在聽的程序、與一個真的從別的位址連過來的請求。
@@ -871,8 +874,7 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 實測用**隔離的** compose 專案名、自己的具名 volume 與暫存的目標根目錄，結束時（含失敗時）一併清掉；
 不碰任何既有的容器、volume 或埠號以外的東西。
 
-**這個介面觀察不到的**：`compose.dev.yaml` 疊上去之後服務真的起得來（只驗到解析；開發者每次 `just docker dev run`
-都在驗它）；CI 一律設 `CM_CI_KEY`，所以服務實測走的是帶鍵的名稱，沒設鍵時的名稱只由設定解析那一半觀察（#356）；`restart: unless-stopped` 在機器重開後真的把服務拉起來（那是 docker daemon 的行為，不是這個 repo 的）。
+**這個介面觀察不到的**：開發模式在 macOS／Docker Desktop 上起不起得來（實測只在 CI 的 Linux runner 上，#392）；CI 一律設 `CM_CI_KEY`，所以服務實測走的是帶鍵的名稱，沒設鍵時的名稱只由設定解析那一半觀察（#356）；`restart: unless-stopped` 在機器重開後真的把服務拉起來（那是 docker daemon 的行為，不是這個 repo 的）。
 
 ### T26 — 備份與還原
 
