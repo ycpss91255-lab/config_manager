@@ -7,6 +7,9 @@
 #   映像             config_manager:runtime-<鍵>（CM_TAG）
 #   容器名           compose 檔的名稱加上 -<鍵>（CM_NAME_SUFFIX）；腳本自己起的容器也加
 #   標籤             這一輪建立的映像、容器與資料卷都帶 cm.ci.owner=<鍵>
+#   清理             compose down 只收這個專案；之後再照 cm.ci.owner=<完整的鍵> 收一次。
+#                    **不照名稱前綴或子字串挑**——以本次的鍵開頭的另一個鍵，是另一個擁有者
+#                    （script/ci_bystanders.sh 在 CI 上驗這一點）
 #
 # 沒設時一個都不變：映像 config_manager:runtime、容器名是 compose 檔的預設、不帶標籤、
 # 不寫疊加檔，專案名照呼叫端原本的寫法。
@@ -27,6 +30,7 @@ owner_init() {
       "不設它，或用 script/ci_key.sh 算出來的值"
   OWNER_KEY="${CM_CI_KEY}"
   OWNER_SUFFIX="-${OWNER_KEY}"
+  # shellcheck disable=SC2034 # 由 source 這支的 compose_smoke.sh 與 backup_drill.sh 帶進 docker run
   OWNER_LABELS=(--label "cm.ci.owner=${OWNER_KEY}")
   export CM_TAG="runtime-${OWNER_KEY}"
   export CM_NAME_SUFFIX="${OWNER_SUFFIX}"
@@ -53,6 +57,18 @@ owner_compose_file() {
 # owner_files <COMPOSE_FILE 的值> —— 有疊加檔時接在最後面，印出完整的 COMPOSE_FILE。
 owner_files() {
   printf '%s%s\n' "$1" "${OWNER_FILE:+:${OWNER_FILE}}"
+}
+
+# owner_sweep —— 清理的最後一步：照 cm.ci.owner=<完整的鍵> 收掉還留著的容器與資料卷
+# （例如中途失敗、compose down 沒收到的）。label 的過濾是整個值相等，不是前綴。每一步都容錯：
+# 收拾本身不該再製造一個蓋掉原本錯誤的錯誤。
+owner_sweep() {
+  [[ -n "${OWNER_KEY}" ]] || return 0
+  local -a ids=()
+  mapfile -t ids < <(docker container ls --all --quiet --filter "label=cm.ci.owner=${OWNER_KEY}" 2>/dev/null)
+  ((${#ids[@]} == 0)) || docker container rm --force "${ids[@]}" >/dev/null 2>&1 || true
+  mapfile -t ids < <(docker volume ls --quiet --filter "label=cm.ci.owner=${OWNER_KEY}" 2>/dev/null)
+  ((${#ids[@]} == 0)) || docker volume rm --force "${ids[@]}" >/dev/null 2>&1 || true
 }
 
 # owner_verify <compose 的容器>… —— 這一輪建立的容器屬於 <鍵> 這個專案、帶 cm.ci.owner=<鍵>；

@@ -17,7 +17,9 @@
 # **每個資源有明確的擁有者**（#356）：會建映像、compose 專案、容器或資料卷的 job，第一步先以
 # script/ci_key.sh 算出自己的鍵（run_id、run_attempt、job id，matrix 的 job 再加分片
 # CM_CI_SHARD），寫進 CM_CI_KEY。映像 tag、compose 專案名與容器名都帶這個鍵，資源都帶
-# cm.ci.owner=<鍵> 標籤。重跑時 run_attempt 不同，名稱全部換新。
+# cm.ci.owner=<鍵> 標籤，清理只照這個鍵挑。重跑時 run_attempt 不同，名稱全部換新。
+# compose-smoke 與 backup-drill 另外在同一個 daemon 上放四組別的擁有者的資源當對照組
+# （script/ci_bystanders.sh），跑完核對它們沒有被動到。
 #
 # **埠沒有隔離**：compose 的服務聽固定的 127.0.0.1:8080／8081，compose_smoke.sh 的對照服務聽
 # 18099。GitHub-hosted runner 每個 job 一台新的 VM，所以這裡不衝突；同一個 docker daemon 上
@@ -304,7 +306,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: ./script/ci_key.sh --github-env
+      # 清理只處理本次擁有的資源（#356）：先放別的擁有者的對照組，跑完核對它們沒有被動到。
+      - run: ./script/ci_bystanders.sh plant "${RUNNER_TEMP}/bystanders"
       - run: ./script/compose_smoke.sh
+      - if: always()
+        run: ./script/ci_bystanders.sh check "${RUNNER_TEMP}/bystanders"
 
   backup-drill:
     # 備份與還原的實際演練（T26 的第三個觀察位置，#52）：真的容器、真的 volume、真的檔案權限底下，
@@ -318,7 +324,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: ./script/ci_key.sh --github-env
+      # 清理只處理本次擁有的資源（#356）：同 compose-smoke。
+      - run: ./script/ci_bystanders.sh plant "${RUNNER_TEMP}/bystanders"
       - run: ./script/backup_drill.sh
+      - if: always()
+        run: ./script/ci_bystanders.sh check "${RUNNER_TEMP}/bystanders"
 
   ci-rollup:
     # 唯一的必要狀態檢查，比照 base。分支保護只指名這一個 job，所以在上面新增一個

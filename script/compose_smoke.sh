@@ -79,6 +79,7 @@ cleanup() {
     COMPOSE_FILE="compose.yaml:compose.bridge.yaml" \
       docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
+  owner_sweep
   if [[ -n "${WORK}" ]]; then
     # 目標根目錄裡的檔案是容器的使用者寫的，runner 的使用者不一定刪得掉；交給一個容器去刪。
     docker run --rm "${OWNER_LABELS[@]}" --user root --entrypoint rm -v "${WORK}:${WORK}" \
