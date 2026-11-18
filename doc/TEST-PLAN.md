@@ -1383,6 +1383,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/coverage_badge.sh` | `test/bats/unit/coverage_badge.bats` |
 | `script/ci_rollup.sh` | `test/bats/unit/ci_rollup.bats` |
 | `script/ci_key.sh`（#356） | `test/bats/unit/ci_key.bats` |
+| `script/lint_run_name.sh`、`script/githook-checks/pre-push/10-run-name.sh`（#350） | `test/bats/unit/lint_run_name.bats` |
 | `script/acceptance.sh` | `test/bats/unit/acceptance.bats` |
 | `script/release.sh` | `test/bats/unit/release.bats` |
 | `justfile`（任務進入點的接線） | `test/bats/unit/justfile.bats` |
@@ -1574,6 +1575,29 @@ recipe 本體仍然是刻意的空格——它們是薄 wrapper，#74 寫下的�
 **`justfile` 家族不進「模組 → 測試介面」那張稽核表。** 那張表只涵蓋 `.py` 與 `.sh`
 （`script/lint_coverage_audit.sh` 把第一欄的裸名補成 `.py` 再要求檔案存在，`justfile`
 兩者都不是）。它的接線記在這裡與前面的「介面 → 測試檔」表，不需要在稽核表再列一次。
+
+**`script/lint_run_name.sh` 被觀察的是「每一次 workflow 執行的名稱分不分得出對應的 commit」**（#350）。
+workflow 沒有 `run-name` 時，`pull_request` 觸發的每一次執行都顯示 PR 標題，同一個 PR 推好幾次名稱都一樣。它讀
+`.github/workflows/` 底下的檔，照每一種觸發要求 `run-name` 引用能辨識 commit 的欄位（維護者 11/14 定案）。它是
+**獨立的腳本**：CI 的 `run-name` job 與本機的 pre-push hook（`script/githook-checks/pre-push/10-run-name.sh`）
+呼叫同一支，不併進 `--lint`。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| repo 自己的 `ci.yaml` 與 `release.yaml` | 通過 |
+| 沒有 `run-name` | 擋下，指名那個檔 |
+| `run-name` 是純靜態字串（沒有 `${{ … }}`；或沒加引號、空格加 `#` 之後被 YAML 當成註解，只剩靜態文字） | 擋下 |
+| `pull_request` 觸發，只帶 PR 編號或標題、沒有 head 的 SHA（`github.event.pull_request.head.sha`） | 擋下，指名觸發與缺的欄位 |
+| `pull_request` 觸發帶的是 `github.sha`（GitHub 為 PR 合出來的那一個 commit），不是 head 的 SHA | 擋下 |
+| `push`、`workflow_dispatch`、`merge_group` 觸發，沒有 `github.sha` | 擋下，指名觸發 |
+| 推 tag 的觸發（`push.tags`），少了 tag 名稱（`github.ref_name`）或 `github.sha` | 擋下；兩者都有時通過 |
+| `on:` 寫成一行（`on: push`、`on: [push, pull_request]`） | 照同樣的觸發判定 |
+| `--pre-push` | 檢查的是要推上去的每一個 commit **裡的** workflow 檔，不是工作目錄裡的；刪除分支的那一行（本地 SHA 全是 0）略過 |
+| 登記的 pre-push 檢查 | 把標準輸入交給 `lint_run_name.sh --pre-push`，判定與直接呼叫相同 |
+
+**它擋不住的那一件事**：運算式在每一種觸發下**真的印出**那個欄位。它看的是 `run-name` 有沒有引用那個欄位，引用藏在一個
+永遠不成立的條件裡也會通過；實際的名稱由 GitHub 上的執行紀錄核對。`merge_group` 的名稱這個 repo 沒有開 merge queue，
+沒有實際的執行可以核對。
 
 **`script/setup_hooks.sh` 被觀察的是「打開與關掉本機 git hook 時，動了哪一份 git 設定」**（#391）。
 它只設這個 repo 的 `core.hooksPath`；這份本地設定由同一個 repo 的**所有 worktree 共用**（git-worktree 文件），
@@ -1953,6 +1977,8 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/hooks/pre/run.sh` | T19（#385：主機端的舊變數殘留偵測；目標根目錄的檢查一併） | 已落地 |
 | `script/hooks/post/run.sh` | T19（#385：在主機上讀主機名稱、交給寫檔程式；候選檔本身在 T27） | 已落地 |
 | `script/setup_hooks.sh` | T19（本機 git hook 的開關：只動這個 repo 的本地 `core.hooksPath`，#391） | 已落地 |
+| `script/lint_run_name.sh` | T19（workflow 的 run-name 分得出對應的 commit，#350） | 已落地（CI 的 `run-name` job 與本機 pre-push hook 執行，不由 `test.sh --lint` 執行） |
+| `script/githook-checks/pre-push/10-run-name.sh` | T19（把 pre-push 的標準輸入交給 `lint_run_name.sh --pre-push`，#350） | 已落地 |
 | `script/githook.sh` | T19（本機 git hook 的共用入口，檢查轉進檢查映像，#391） | 已落地 |
 | `script/local/cfg/cfg.sh` | 無——見「刻意的空格」 | 已落地 |
 
