@@ -31,6 +31,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # merge queue（#356）。只在 pull request 上跑的三個 job 在這裡不跑（它們的 if: 只認
+  # pull_request），與 push 到 main 時一樣；acceptance 只在 push 到 main 跑。ci_rollup.sh 對
+  # 這兩組在 merge_group 時允許 skipped，其餘每次都該跑的仍要 success。
+  merge_group:
   workflow_dispatch:
 
 permissions:
