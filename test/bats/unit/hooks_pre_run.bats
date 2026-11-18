@@ -165,4 +165,7 @@ teardown() {
 
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"docker compose config"* ]]
+  # 沒有退回環境變數的值或 compose 檔的預設值去檢查——那樣停下的理由會變成「目錄不存在」，
+  # 或在目錄剛好存在時繼續。
+  [[ "${output}" != *"${WORK}/target"* && "${output}" != *"/opt/robot/config"* ]]
 }
