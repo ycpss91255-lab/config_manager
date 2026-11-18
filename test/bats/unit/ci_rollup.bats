@@ -87,6 +87,24 @@ rollup() {
   [ "${status}" -eq 0 ]
 }
 
+# merge queue（#356）：merge_group 觸發時，只在 pull request 跑的與只在 push 到 main 跑的 job
+# 都不跑；每次都該跑的仍要過。
+
+@test "merge_group 觸發時只在 pull request 與只在 main 跑的 job 被跳過，結束碼為 0（#356）" {
+  rollup merge_group refs/heads/gh-readonly-queue/main/pr-1-abc \
+    checkpoints skipped lint success coverage success acceptance skipped
+
+  [ "${status}" -eq 0 ]
+}
+
+@test "merge_group 觸發時每次都該跑的 job 被跳過仍不放行（#356）" {
+  rollup merge_group refs/heads/gh-readonly-queue/main/pr-1-abc \
+    checkpoints skipped lint skipped coverage success acceptance skipped
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"lint"* ]]
+}
+
 @test "每次都該跑的 job 失敗時不放行，並指名那個 job" {
   rollup pull_request refs/pull/1/merge checkpoints success lint failure coverage success acceptance skipped
 

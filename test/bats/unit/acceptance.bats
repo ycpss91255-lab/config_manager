@@ -678,3 +678,71 @@ milestone() {
 
   [ "${status}" -eq 1 ]
 }
+
+# ── 轉進容器時用的測試映像（#356）──────────────────────────────────────────
+#
+# CI 的每個 job 用自己的鍵當測試映像的 tag 與標籤，同一個 daemon 上別的 job 建的映像就蓋不掉
+# 這一個。與 test.bats 同一個觀察位置：PATH 上的假 docker 把建映像與 docker run 兩次呼叫的
+# 參數逐行記下來，所以同一個映像名出現兩次，就是兩次都用了它。不設 CM_IN_TEST_IMAGE、
+# CM_ACCEPTANCE_MAP、CM_ACCEPTANCE_ROOT，腳本才會去轉進容器。
+
+dispatch() {
+  local bin="${WORK}/bin" tool
+  mkdir -p "${bin}"
+  for tool in bash dirname id; do
+    ln -sf "$(command -v "${tool}")" "${bin}/${tool}"
+  done
+  DOCKER_ARGV="${WORK}/docker-argv"
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >>"%s"\n' "${DOCKER_ARGV}" >"${bin}/docker"
+  chmod +x "${bin}/docker"
+  run env -i PATH="${bin}" HOME="${WORK}" "$@" "${SCRIPT}" v0.1.0
+}
+
+@test "不設 CM_TEST_IMAGE_TAG 時轉進容器建映像與 docker run 都用 :local（#356）" {
+  dispatch
+
+  [ "$(grep -cxF -- 'config_manager-test-tools:local' "${DOCKER_ARGV}")" -eq 2 ]
+}
+
+@test "CM_TEST_IMAGE_TAG 設了時建映像與 docker run 都用那個 tag，不是 :local（#356）" {
+  dispatch CM_TEST_IMAGE_TAG=cm-4242-1-acceptance
+
+  [ "$(grep -cxF -- 'config_manager-test-tools:cm-4242-1-acceptance' "${DOCKER_ARGV}")" -eq 2 ]
+  ! grep -qxF -- 'config_manager-test-tools:local' "${DOCKER_ARGV}"
+}
+
+@test "CM_TEST_IMAGE_TAG 設了但是空的時以 2 結束並指名它，不建映像（#356）" {
+  dispatch CM_TEST_IMAGE_TAG=
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_TEST_IMAGE_TAG"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}
+
+@test "CM_TEST_IMAGE_TAG 不是合法的映像 tag 時以 2 結束並指名它，不建映像（#356）" {
+  dispatch CM_TEST_IMAGE_TAG=a:b
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_TEST_IMAGE_TAG=a:b"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}
+
+@test "CM_CI_KEY 設了時建映像與 docker run 都帶 cm.ci.owner 標籤（#356）" {
+  dispatch CM_CI_KEY=cm-4242-1-acceptance
+
+  [ "$(grep -cxF -- 'cm.ci.owner=cm-4242-1-acceptance' "${DOCKER_ARGV}")" -eq 2 ]
+}
+
+@test "不設 CM_CI_KEY 時建映像與 docker run 都不帶任何標籤（#356）" {
+  dispatch
+
+  ! grep -qxF -- '--label' "${DOCKER_ARGV}"
+}
+
+@test "CM_CI_KEY 含小寫英數字、- 與 _ 以外的字元時以 2 結束並指名它，不建映像（#356）" {
+  dispatch CM_CI_KEY='cm 1'
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_CI_KEY"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}

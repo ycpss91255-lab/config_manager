@@ -18,14 +18,21 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_ROOT
 readonly API="http://127.0.0.1:8080"
-readonly BACKEND="config_manager_backend"
-readonly FRONTEND="config_manager_frontend"
 readonly REPO_IN_CONTAINER="/opt/config_manager/config-repo"
-readonly IMAGE="config_manager:runtime"
+# 容器名與映像在設了 CM_CI_KEY 時帶上擁有者的鍵（#356，見 script/ci_owner.sh），所以不是 readonly。
+BACKEND="config_manager_backend"
+FRONTEND="config_manager_frontend"
+IMAGE="config_manager:runtime"
 
 STEP="準備"
 WORK=""
 RECORDER_PID=""
+
+# 這幾個由 ci_owner.sh 設定；shellcheck 不跟進被 source 的檔案，所以先在這裡宣告。
+declare OWNER_KEY OWNER_SUFFIX OWNER_IMAGE
+declare -a OWNER_LABELS
+# shellcheck source=ci_owner.sh
+source "${REPO_ROOT}/script/ci_owner.sh"
 
 fail() {
   printf 'backup_drill: 失敗 [%s] %s。下一步：%s\n' "${STEP}" "$1" "$2" >&2
@@ -52,6 +59,9 @@ usage() {
   被改過的那一份沒有被自動覆寫
 
 占用 8080／8081 與 compose 檔裡固定的容器名稱；已經有人在用就直接停下，不碰既有的東西。
+
+  CM_CI_KEY=<鍵>  CI 用（#356）：compose 專案、映像、容器都以這個鍵命名並帶 cm.ci.owner 標籤，
+                  清理只照這個鍵挑。見 script/ci_owner.sh
 USAGE
 }
 
@@ -61,9 +71,10 @@ cleanup() {
   if [[ -n "${COMPOSE_PROJECT_NAME:-}" ]]; then
     docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
+  owner_sweep
   if [[ -n "${WORK}" ]]; then
     # 目標根目錄裡的檔案是容器的使用者寫的，runner 的使用者不一定刪得掉；交給一個容器去刪。
-    docker run --rm --user root --entrypoint rm -v "${WORK}:${WORK}" \
+    docker run --rm "${OWNER_LABELS[@]}" --user root --entrypoint rm -v "${WORK}:${WORK}" \
       "${IMAGE}" -rf "${WORK}/targets" >/dev/null 2>&1 || true
     rm -rf "${WORK}" 2>/dev/null || true
   fi
@@ -127,7 +138,7 @@ preconditions() {
 # 在目標根目錄裡以**服務的使用者**身分做一件事（建檔、改檔、刪檔、量雜湊與權限）。
 # 不經過 compose：服務停著、設定庫沒了的時候也要做得到。
 in_targets() {
-  docker run --rm --user 1000:1000 --entrypoint sh -v "${CM_TARGET_ROOT}:${CM_TARGET_ROOT}" \
+  docker run --rm "${OWNER_LABELS[@]}" --user 1000:1000 --entrypoint sh -v "${CM_TARGET_ROOT}:${CM_TARGET_ROOT}" \
     --workdir "${CM_TARGET_ROOT}" "${IMAGE}" -c "$1"
 }
 
@@ -135,7 +146,7 @@ in_targets() {
 # 在容器裡用 Python 量，不用 stat：這支腳本裡的指令有一部分跑在主機上，量權限的寫法不該讓人
 # 分不清哪一段只能在 Linux 上跑。
 fingerprint() {
-  docker run --rm --user 1000:1000 --entrypoint python \
+  docker run --rm "${OWNER_LABELS[@]}" --user 1000:1000 --entrypoint python \
     -v "${CM_TARGET_ROOT}:${CM_TARGET_ROOT}" "${IMAGE}" -c '
 import grp, hashlib, os, pwd, sys
 
@@ -357,16 +368,22 @@ main() {
     return 0
   fi
   cd "${REPO_ROOT}"
+  owner_init
+  BACKEND+="${OWNER_SUFFIX}"
+  FRONTEND+="${OWNER_SUFFIX}"
+  IMAGE="${OWNER_IMAGE}"
   preconditions
 
   WORK="$(mktemp -d)"
   trap cleanup EXIT
-  export COMPOSE_PROJECT_NAME="cm_drill_$$"
-  export COMPOSE_FILE="compose.yaml"
+  export COMPOSE_PROJECT_NAME="${OWNER_KEY:-cm_drill_$$}"
   export CM_TARGET_ROOT="${WORK}/targets"
   # 目標根目錄要讓容器裡的服務使用者寫得進去；它的 uid 與 runner 的不同，所以整個放開。
   mkdir -p "${CM_TARGET_ROOT}" "${WORK}/backups"
   chmod 0777 "${CM_TARGET_ROOT}"
+  owner_compose_file "${WORK}"
+  COMPOSE_FILE="$(owner_files compose.yaml)"
+  export COMPOSE_FILE
 
   STEP="建置"
   docker compose build >/dev/null 2>&1 \
@@ -375,6 +392,10 @@ main() {
     || fail "docker compose up 失敗" "直接跑 docker compose up 看它印出的原因"
   wait_for_service
   ok "演練環境起來了（專案 ${COMPOSE_PROJECT_NAME}，自己的設定庫與目標目錄）"
+  if [[ -n "${OWNER_KEY}" ]]; then
+    owner_verify "${BACKEND}" "${FRONTEND}"
+    ok "擁有者：專案 ${COMPOSE_PROJECT_NAME}、映像 ${IMAGE}、容器 ${BACKEND}／${FRONTEND}、設定庫的資料卷都帶 cm.ci.owner=${OWNER_KEY}"
+  fi
 
   seed
   backs_up_while_promoting

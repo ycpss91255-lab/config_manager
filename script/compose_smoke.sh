@@ -18,15 +18,23 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_ROOT
 readonly API="http://127.0.0.1:8080"
 readonly WEB="http://127.0.0.1:8081"
-readonly BACKEND="config_manager_backend"
-readonly FRONTEND="config_manager_frontend"
-readonly CONTROL="cm_smoke_control"
+# 容器名與映像在設了 CM_CI_KEY 時帶上擁有者的鍵（#356，見 script/ci_owner.sh），所以不是 readonly。
+BACKEND="config_manager_backend"
+FRONTEND="config_manager_frontend"
+CONTROL="cm_smoke_control"
+IMAGE="config_manager:runtime"
 readonly CONTROL_PORT=18099
 readonly STOP_GRACE=10
 
 MODE="準備"
 WORK=""
 CONTROL_PID=""
+
+# 這幾個由 ci_owner.sh 設定；shellcheck 不跟進被 source 的檔案，所以先在這裡宣告。
+declare OWNER_KEY OWNER_SUFFIX OWNER_IMAGE
+declare -a OWNER_LABELS
+# shellcheck source=ci_owner.sh
+source "${REPO_ROOT}/script/ci_owner.sh"
 
 fail() {
   printf 'compose_smoke: 失敗 [%s] %s。下一步：%s\n' "${MODE}" "$1" "$2" >&2
@@ -55,6 +63,9 @@ usage() {
 另外驗一次：建好的 runtime 映像裡 import 不到測試工具。
 
 占用 8080／8081 與 compose 檔裡固定的容器名稱；已經有人在用就直接停下，不碰既有的東西。
+
+  CM_CI_KEY=<鍵>  CI 用（#356）：compose 專案、映像、容器都以這個鍵命名並帶 cm.ci.owner 標籤，
+                  清理只照這個鍵挑。見 script/ci_owner.sh
 USAGE
 }
 
@@ -68,10 +79,11 @@ cleanup() {
     COMPOSE_FILE="compose.yaml:compose.bridge.yaml" \
       docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   fi
+  owner_sweep
   if [[ -n "${WORK}" ]]; then
     # 目標根目錄裡的檔案是容器的使用者寫的，runner 的使用者不一定刪得掉；交給一個容器去刪。
-    docker run --rm --user root --entrypoint rm -v "${WORK}:${WORK}" \
-      "config_manager:runtime" -rf "${WORK}/targets" >/dev/null 2>&1 || true
+    docker run --rm "${OWNER_LABELS[@]}" --user root --entrypoint rm -v "${WORK}:${WORK}" \
+      "${IMAGE}" -rf "${WORK}/targets" >/dev/null 2>&1 || true
     rm -rf "${WORK}" 2>/dev/null || true
   fi
   return "${status}"
@@ -143,9 +155,13 @@ start_control() {
     python3 -m http.server "${CONTROL_PORT}" --bind 0.0.0.0 --directory "${WORK}/control" >/dev/null 2>&1 &
     CONTROL_PID=$!
   else
-    docker run --detach --name "${CONTROL}" --publish "0.0.0.0:${CONTROL_PORT}:8081" \
-      --env CM_ROLE=frontend --stop-signal SIGINT "config_manager:runtime" \
+    docker run --detach "${OWNER_LABELS[@]}" --name "${CONTROL}" --publish "0.0.0.0:${CONTROL_PORT}:8081" \
+      --env CM_ROLE=frontend --stop-signal SIGINT "${IMAGE}" \
       python -m http.server 8081 --bind 0.0.0.0 --directory /opt/config_manager/src/config_manager/web >/dev/null
+    if [[ -n "${OWNER_KEY}" ]]; then
+      [[ "$(docker container inspect --format '{{index .Config.Labels "cm.ci.owner"}}' "${CONTROL}")" == "${OWNER_KEY}" ]] \
+        || fail "對照容器 ${CONTROL} 沒有帶 cm.ci.owner=${OWNER_KEY}" "檢查 start_control 的 docker run 有沒有帶 OWNER_LABELS"
+    fi
   fi
   wait_for "http://${address}:${CONTROL_PORT}/"
   ok "對照：${address}:${CONTROL_PORT} 上一個綁 0.0.0.0 的服務連得到（測試端到得了這個位址）"
@@ -334,9 +350,11 @@ stops_in_time() {
 
 exercise() {
   MODE="$1"
-  export COMPOSE_FILE="$2"
+  COMPOSE_FILE="$(owner_files "$2")"
+  export COMPOSE_FILE
   printf 'compose_smoke: ── %s 網路（%s）──\n' "${MODE}" "${COMPOSE_FILE}"
   launch
+  owned_by_this_run
   answers_locally
   host_name_candidate
   only_local
@@ -347,11 +365,18 @@ exercise() {
   rm -f "${WORK}/cookies"
 }
 
+# 擁有者（#356）：設了 CM_CI_KEY 時，這一輪的容器、映像與資料卷都以 docker inspect 讀回來核對。
+owned_by_this_run() {
+  [[ -n "${OWNER_KEY}" ]] || return 0
+  owner_verify "${BACKEND}" "${FRONTEND}"
+  ok "擁有者：專案 ${COMPOSE_PROJECT_NAME}、映像 ${IMAGE}、容器 ${BACKEND}／${FRONTEND}、設定庫的資料卷都帶 cm.ci.owner=${OWNER_KEY}"
+}
+
 image_has_no_test_tooling() {
   MODE="映像"
   local module
   for module in pytest coverage ruff mypy pylint playwright; do
-    if docker run --rm --entrypoint python "config_manager:runtime" -c "import ${module}" >/dev/null 2>&1; then
+    if docker run --rm "${OWNER_LABELS[@]}" --entrypoint python "${IMAGE}" -c "import ${module}" >/dev/null 2>&1; then
       fail "runtime 映像裡 import 得到 ${module}" "把它從 config/pip/requirements.txt 移到 requirements-dev.txt"
     fi
   done
@@ -364,11 +389,16 @@ main() {
     return 0
   fi
   cd "${REPO_ROOT}"
+  owner_init
+  BACKEND+="${OWNER_SUFFIX}"
+  FRONTEND+="${OWNER_SUFFIX}"
+  CONTROL+="${OWNER_SUFFIX}"
+  IMAGE="${OWNER_IMAGE}"
   preconditions
 
   WORK="$(mktemp -d)"
   trap cleanup EXIT
-  export COMPOSE_PROJECT_NAME="cm_smoke_$$"
+  export COMPOSE_PROJECT_NAME="${OWNER_KEY:-cm_smoke_$$}"
   export CM_TARGET_ROOT="${WORK}/targets"
   # 主機名稱不再由環境變數決定（#385）：留著舊的 CM_HOSTNAME，pre-run hook 會停下來。
   unset CM_HOSTNAME
@@ -377,9 +407,10 @@ main() {
   mkdir -p "${CM_TARGET_ROOT}" "${WORK}/control"
   chmod 0777 "${CM_TARGET_ROOT}"
   printf 'control\n' >"${WORK}/control/index.html"
+  owner_compose_file "${WORK}"
 
   MODE="建置"
-  docker compose build >/dev/null 2>&1 \
+  COMPOSE_FILE="$(owner_files compose.yaml)" docker compose build >/dev/null 2>&1 \
     || fail "runtime 映像建不起來" "直接跑 docker compose build 看它印出的原因"
   ok "runtime 映像建好了"
 

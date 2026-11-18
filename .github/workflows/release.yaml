@@ -36,8 +36,11 @@ jobs:
           # rc 編號由既有 tag 推導，而淺層 clone 沒有 tag——沒有 tag 的推導會
           # 把每一個 rc 都算成 rc1，於是每一次發布都擋下自己。
           fetch-depth: 0
+      # 擁有者的鍵（#356）：release.sh 經 acceptance.sh 與 test.sh 建測試映像，tag 與標籤帶這個鍵。
+      - run: ./script/ci_key.sh --github-env
       - env:
           GH_TOKEN: ${{ github.token }}
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
         # GITHUB_REF_NAME 是 tag 名。走環境變數而不是把運算式內插進 run，
         # 與 ci.yaml 的 ci-rollup 同一個理由。
         run: ./script/release.sh "${GITHUB_REF_NAME}"

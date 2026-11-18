@@ -12,7 +12,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_ROOT
-readonly TEST_IMAGE="config_manager-test-tools:local"
+readonly TEST_IMAGE_NAME="config_manager-test-tools"
+# 由 resolve_test_image 定（#356）：預設是 config_manager-test-tools:local。
+TEST_IMAGE=""
+IMAGE_LABELS=()
 readonly TEST_DOCKERFILE="docker/Dockerfile.test-tools"
 # GitHub Actions 快取裡放這份映像的層所用的範圍名。只有這份映像用它。
 readonly TEST_IMAGE_CACHE_SCOPE="config_manager-test-tools"
@@ -51,7 +54,35 @@ usage() {
                       仍然不是一項檢查。
   CM_TEST_IMAGE_CACHE=gha        建映像時從 GitHub Actions 的快取取層（CI 用）
   CM_TEST_IMAGE_CACHE=gha-write  同上，並把建好的層寫回快取
+  CM_TEST_IMAGE_TAG=<tag>        測試映像用 config_manager-test-tools:<tag>，不用 :local（CI 用，#356）
+  CM_CI_KEY=<鍵>                 建映像與起容器時帶 cm.ci.owner=<鍵> 標籤（CI 用，#356）
 USAGE
+}
+
+# 測試映像的名稱與擁有者標籤（#356）。CI 的每個 job 以自己的擁有者鍵（script/ci_key.sh）當 tag
+# 與 cm.ci.owner 標籤：同一個 daemon 上別的 job、別一輪或重跑建的映像，就蓋不掉這一個，事後也
+# 認得出誰建的。兩個都不設時名稱是 :local、不帶標籤，與以前一字不差。設了卻是空的或不合格式，
+# 一律停下——安靜地退回 :local，等於又回到大家共用一個 tag。
+resolve_test_image() {
+  local tag="local"
+  if [[ -v CM_TEST_IMAGE_TAG ]]; then
+    if [[ ! "${CM_TEST_IMAGE_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+      printf 'test.sh: CM_TEST_IMAGE_TAG=%s 不是合法的映像 tag，映像沒有建，檢查一項都沒跑\n' "${CM_TEST_IMAGE_TAG}" >&2
+      printf 'test.sh: 下一步：不設它（用 :local），或設成英數字、_、.、- 組成、不以 . 或 - 開頭、最多 128 個字元的 tag\n' >&2
+      exit 2
+    fi
+    tag="${CM_TEST_IMAGE_TAG}"
+  fi
+  TEST_IMAGE="${TEST_IMAGE_NAME}:${tag}"
+  IMAGE_LABELS=()
+  if [[ -v CM_CI_KEY ]]; then
+    if [[ ! "${CM_CI_KEY}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+      printf 'test.sh: CM_CI_KEY=%s 不是 script/ci_key.sh 給的那種鍵（小寫英數字、-、_），映像沒有建，檢查一項都沒跑\n' "${CM_CI_KEY}" >&2
+      printf 'test.sh: 下一步：不設它，或用 script/ci_key.sh 算出來的值\n' >&2
+      exit 2
+    fi
+    IMAGE_LABELS=(--label "cm.ci.owner=${CM_CI_KEY}")
+  fi
 }
 
 # 把這支腳本轉進裝了工具的映像裡重跑，除非已經在裡面了。一個環境、兩個呼叫者：
@@ -62,6 +93,7 @@ dispatch_to_container() {
     printf 'test.sh: 下一步：安裝 docker，或設 CM_TEST_LOCAL=1 以這台主機現有的工具執行\n' >&2
     exit 1
   fi
+  resolve_test_image
 
   local -a _build
   # CI 的每個 job 都是一台全新的機器，本機那層快取不存在，於是每個 job 都從頭建一次
@@ -94,7 +126,7 @@ dispatch_to_container() {
       exit 2
       ;;
   esac
-  _build+=(-f "${REPO_ROOT}/${TEST_DOCKERFILE}" -t "${TEST_IMAGE}")
+  _build+=(-f "${REPO_ROOT}/${TEST_DOCKERFILE}" -t "${TEST_IMAGE}" "${IMAGE_LABELS[@]}")
 
   # 有快取時很便宜；只有 Dockerfile 或釘住的 requirements 真的變了，層才會重建。
   # 進度往 stdout，不往 fd 2。**fd 2 是錯誤的出口**，而建置進度不是錯誤——寫到
@@ -124,7 +156,7 @@ dispatch_to_container() {
   # 走 GIT_CONFIG_* 而不是全域設定，也是同一個原因：沒有可寫的 HOME，就沒有地方
   # 放那份設定。
   local -a _run=(
-    docker run --rm
+    docker run --rm "${IMAGE_LABELS[@]}"
     --user "$(id -u):$(id -g)"
     --env HOME=/tmp
     --env GIT_CONFIG_COUNT=1

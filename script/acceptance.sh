@@ -46,7 +46,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 readonly REPO_ROOT
-readonly TEST_IMAGE="config_manager-test-tools:local"
+readonly TEST_IMAGE_NAME="config_manager-test-tools"
+# 由 resolve_test_image 定（#356）：預設是 config_manager-test-tools:local。
+TEST_IMAGE=""
+IMAGE_LABELS=()
 readonly TEST_DOCKERFILE="docker/Dockerfile.test-tools"
 
 # 兩份輸入的位置可以被覆寫，這樣這支腳本自己也測得到：規格餵給它一份手寫的對照表與
@@ -89,7 +92,36 @@ usage() {
   CM_ACCEPTANCE_MAP    改讀這份對照表
   CM_ACCEPTANCE_ROOT   規格參照以這個目錄為根
 兩者供 test/bats/unit/acceptance.bats 使用，且只在映像內（或 CM_TEST_LOCAL=1）有效。
+
+  CM_TEST_IMAGE_TAG=<tag>  轉進容器時用 config_manager-test-tools:<tag>，不用 :local（CI 用，#356）
+  CM_CI_KEY=<鍵>           建映像與起容器時帶 cm.ci.owner=<鍵> 標籤（CI 用，#356）
 USAGE
+}
+
+# 測試映像的名稱與擁有者標籤（#356）。CI 的每個 job 以自己的擁有者鍵（script/ci_key.sh）當 tag
+# 與 cm.ci.owner 標籤：同一個 daemon 上別的 job、別一輪或重跑建的映像，就蓋不掉這一個，事後也
+# 認得出誰建的。兩個都不設時名稱是 :local、不帶標籤，與以前一字不差。設了卻是空的或不合格式，
+# 一律停下——安靜地退回 :local，等於又回到大家共用一個 tag。
+resolve_test_image() {
+  local tag="local"
+  if [[ -v CM_TEST_IMAGE_TAG ]]; then
+    if [[ ! "${CM_TEST_IMAGE_TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+      printf 'acceptance: CM_TEST_IMAGE_TAG=%s 不是合法的映像 tag，映像沒有建，檢查一項都沒跑\n' "${CM_TEST_IMAGE_TAG}" >&2
+      printf 'acceptance: 下一步：不設它（用 :local），或設成英數字、_、.、- 組成、不以 . 或 - 開頭、最多 128 個字元的 tag\n' >&2
+      exit 2
+    fi
+    tag="${CM_TEST_IMAGE_TAG}"
+  fi
+  TEST_IMAGE="${TEST_IMAGE_NAME}:${tag}"
+  IMAGE_LABELS=()
+  if [[ -v CM_CI_KEY ]]; then
+    if [[ ! "${CM_CI_KEY}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; then
+      printf 'acceptance: CM_CI_KEY=%s 不是 script/ci_key.sh 給的那種鍵（小寫英數字、-、_），映像沒有建，檢查一項都沒跑\n' "${CM_CI_KEY}" >&2
+      printf 'acceptance: 下一步：不設它，或用 script/ci_key.sh 算出來的值\n' >&2
+      exit 2
+    fi
+    IMAGE_LABELS=(--label "cm.ci.owner=${CM_CI_KEY}")
+  fi
 }
 
 # 轉進裝了工具的映像裡重跑，除非已經在裡面了。與 script/test.sh 同一份映像、同一條
@@ -106,14 +138,15 @@ dispatch_to_container() {
     printf 'acceptance: 下一步：安裝 docker，或設 CM_TEST_LOCAL=1 以主機上現有的工具執行\n' >&2
     exit 2
   fi
+  resolve_test_image
 
   # 進度往 stdout：fd 2 是錯誤的出口，而建置進度不是錯誤（#108，同 test.sh）。
   printf 'acceptance: 建置 %s\n' "${TEST_IMAGE}"
-  local -a build=(docker build --quiet -f "${REPO_ROOT}/${TEST_DOCKERFILE}" -t "${TEST_IMAGE}")
+  local -a build=(docker build --quiet -f "${REPO_ROOT}/${TEST_DOCKERFILE}" -t "${TEST_IMAGE}" "${IMAGE_LABELS[@]}")
   [[ -n "${CM_APT_MIRROR:-}" ]] && build+=(--build-arg "APT_MIRROR=${CM_APT_MIRROR}")
   "${build[@]}" "${REPO_ROOT}" >/dev/null
 
-  exec docker run --rm \
+  exec docker run --rm "${IMAGE_LABELS[@]}" \
     --user "$(id -u):$(id -g)" \
     --env HOME=/tmp \
     --env GIT_CONFIG_COUNT=1 \

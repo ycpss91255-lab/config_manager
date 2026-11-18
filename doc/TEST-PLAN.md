@@ -845,6 +845,7 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 | **（#385）三種組合都不把 `CM_HOSTNAME` 帶進容器**（主機有沒有設定都一樣）；疊上 `compose.bridge.yaml` 不再要求它 |
 | **（#385）執行期目錄 `/run/config_manager` 不在任何掛載裡**（不是資料卷、不是 bind mount） |
 | 沒有任何一種組合把服務綁到本機以外的位址（定案 3：不提供開放區網的開關） |
+| **（#356）不設 `CM_NAME_SUFFIX` 時容器名是 `config_manager_backend`、`config_manager_frontend`（預設不變）；設了就在兩個名稱後面加上它**（三種組合都一樣） |
 
 | 驗證的行為（服務實測：`script/compose_smoke.sh`，CI 的 Linux runner） |
 |---|
@@ -858,6 +859,8 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 | **（#385）`docker restart` 之後設定 API 回報「目前主機名稱尚未確認」，執行期目錄裡上一次的候選檔已被 entrypoint 清掉；再跑 `script/run.sh` 就取得，服務不重啟** |
 | **（#385）執行期目錄不在容器實際的掛載清單裡（`docker inspect`）；它由服務使用者擁有、權限 0700，裡面的識別碼檔與候選檔權限 0600** |
 | 建好的 `runtime` 映像裡 import 不到任何測試工具（`dependencies.bats` 只看文字，這裡看映像本身） |
+| **（#356）設了 `CM_CI_KEY`：compose 專案名就是鍵；映像是 `config_manager:runtime-<鍵>`；容器名是 `config_manager_backend-<鍵>`、`config_manager_frontend-<鍵>`、`cm_smoke_control-<鍵>`；這一輪建立的映像、容器與資料卷都帶 `cm.ci.owner=<鍵>`（`docker inspect` 核對）** |
+| **（#356）清理只處理本次擁有的資源**：`compose-smoke` job 先在同一個 daemon 上建立四組帶別的鍵的同類資源——另一個 run、另一個 attempt、另一個 job，以及以本次的鍵開頭的另一個鍵（擋住用名稱前綴或子字串挑資源的清理）——各有映像、容器、資料卷；這支跑完之後它們都還在、識別不變（`script/ci_bystanders.sh`） |
 
 **兩個位置回答的是不同的問題，結果分開報，不互相代替。** 設定解析過了，說的是「compose 會照這樣起服務」；
 它說不出「這樣起的服務真的只有本機連得到」——那要有一個真的在聽的程序、與一個真的從別的位址連過來的請求。
@@ -869,7 +872,7 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 不碰任何既有的容器、volume 或埠號以外的東西。
 
 **這個介面觀察不到的**：`compose.dev.yaml` 疊上去之後服務真的起得來（只驗到解析；開發者每次 `just docker dev run`
-都在驗它）；`restart: unless-stopped` 在機器重開後真的把服務拉起來（那是 docker daemon 的行為，不是這個 repo 的）。
+都在驗它）；CI 一律設 `CM_CI_KEY`，所以服務實測走的是帶鍵的名稱，沒設鍵時的名稱只由設定解析那一半觀察（#356）；`restart: unless-stopped` 在機器重開後真的把服務拉起來（那是 docker daemon 的行為，不是這個 repo 的）。
 
 ### T26 — 備份與還原
 
@@ -926,6 +929,8 @@ client），它們的**決定與接線**——拿哪份 repo、失敗時的結�
 | 還原後目標狀態**重新比對**：沒動過的一致、被刪掉的未部署、被改過的偏離 |
 | 未部署的那一份用寫出修復補回：內容與擁有者、權限都與原本相同 |
 | 偏離的那一份**沒有被自動覆寫**：還原與啟動之後內容仍是被改過的；對它叫寫出修復是 409（原因是目標已經存在，不是沒有身分或編輯權）、內容不變 |
+| **（#356）設了 `CM_CI_KEY`：compose 專案名就是鍵；映像是 `config_manager:runtime-<鍵>`；容器名是 `config_manager_backend-<鍵>`、`config_manager_frontend-<鍵>`；這一輪建立的映像、容器與資料卷都帶 `cm.ci.owner=<鍵>`（`docker inspect` 核對）** |
+| **（#356）清理只處理本次擁有的資源**：`backup-drill` job 先建立與 T25 同樣的四組帶別的鍵的資源，這支跑完之後它們都還在、識別不變（`script/ci_bystanders.sh`） |
 
 **三個位置各自說得出的事不同。** 設定庫層說「備份與還原這兩個動作本身對不對」；主機端指令說「人實際打的
 那兩道指令會不會在不該動的時候動」；演練說「在真的容器、真的 volume、真的權限底下，整套走得完」。演練
@@ -1375,6 +1380,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/coverage_gate.sh` | `test/bats/unit/coverage_gate.bats` |
 | `script/coverage_badge.sh` | `test/bats/unit/coverage_badge.bats` |
 | `script/ci_rollup.sh` | `test/bats/unit/ci_rollup.bats` |
+| `script/ci_key.sh`（#356） | `test/bats/unit/ci_key.bats` |
 | `script/acceptance.sh` | `test/bats/unit/acceptance.bats` |
 | `script/release.sh` | `test/bats/unit/release.bats` |
 | `justfile`（任務進入點的接線） | `test/bats/unit/justfile.bats` |
@@ -1457,6 +1463,11 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | 不認得的 `CM_TEST_IMAGE_CACHE` | 以 2 結束並指名它，**不建映像** |
 | 建映像（有沒有設快取都一樣） | 不用 `--quiet`，以 `--progress=plain` 逐層印出建置紀錄（每一層是否取自快取，#358）；紀錄印在 stdout，不在 fd 2 |
 | 映像建不起來 | 以 docker 回的結束碼結束（照傳，不改寫）；fd 2 指出建不起來並給下一步；**不跑任何檢查** |
+| **（#356）`CM_TEST_IMAGE_TAG` 不設** | 建映像與 `docker run` 用的都是 `config_manager-test-tools:local`（行為不變） |
+| **（#356）`CM_TEST_IMAGE_TAG=<tag>`** | 建映像與 `docker run` 用的都是 `config_manager-test-tools:<tag>`，不是 `:local` |
+| **（#356）`CM_TEST_IMAGE_TAG` 設了但是空的，或不是合法的映像 tag** | 以 2 結束並指名它，**不建映像** |
+| **（#356）`CM_CI_KEY=<鍵>`** | 建映像與 `docker run` 都帶 `--label cm.ci.owner=<鍵>`；不設時兩者都不帶任何 label |
+| **（#356）`CM_CI_KEY` 設了但是空的，或含小寫英數字、`-`、`_` 以外的字元** | 以 2 結束並指名它，**不建映像** |
 | `--part api <i>/<n>` ／ `--part web <i>/<n>` | 交給 pytest 的是 `test_api.py` ／ `test_web.py` 收集順序裡第 i、i+n…條 |
 | `--part fast` | 交給 pytest 的是那兩支以外的全部規格 |
 | 一段記下的 `ids.txt` | 就是交給 pytest 的那一份參數，不是另外算一次的清單 |
@@ -1495,9 +1506,27 @@ workflow、一份 `needs` 的 JSON 與觸發事件進去，結束碼與訊息出
 | workflow 有、`needs` 沒列的 job | 非零結束，指名那個 job——它的結果不會被看見 |
 | `needs` 有、沒被分進任何一組規則的 job；規則列了、`needs` 沒有的 job | 非零結束 |
 | `NEEDS` 不是 JSON、workflow 讀不到任何 job | 非零結束，不當成零個 job 全部通過 |
+| **（#356）`merge_group` 觸發**：只在 pull request 跑的與只在 push 到 main 跑的 job 被跳過，其餘都是 `success` | 結束碼 0；每次都該跑的 job 被跳過仍是非零結束 |
 
 **它擋不住的那一件事**：三組規則與各 job 的 `if:` 一致。規則說「只在 pull request 跑」而 `if:`
 其實每次都跑，它判得出結果但判不出那份不一致。`ci.yaml` 在規則旁邊寫明要一起改。
+
+**`script/ci_key.sh` 被觀察的是「CI 建立的資源屬於哪一個擁有者」**（#356）。CI 的每個 job 建立映像、
+compose 專案、容器與資料卷之前，先由它算出這個 job 的鍵：`run_id`、`run_attempt`、job id，matrix 的 job
+再加分片識別。名稱與標籤都帶這個鍵，清理也只照這個鍵挑。它與其餘守門腳本同屬 T19，觀察位置相同：一組受控的
+環境變數進去，印出的鍵、寫進 `GITHUB_ENV` 的內容與結束碼出來。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `GITHUB_RUN_ID`、`GITHUB_RUN_ATTEMPT`、`GITHUB_JOB` 都有值 | 印出 `cm-<run_id>-<run_attempt>-<job>` |
+| 另外有 `CM_CI_SHARD` | 鍵後面再加 `_<分片>`——job id 裡不會有 `_`，所以 `web-e2e` 的第 1 份與一個叫 `web-e2e-1` 的 job 拿到的鍵不同 |
+| 同一個 run、不同的 `GITHUB_RUN_ATTEMPT`（重跑） | 鍵不同 |
+| 三者任一沒有值 | 以 2 結束並指名缺哪一個，**不印鍵** |
+| job id 不是小寫字母開頭、只含 `[a-z0-9-]`；或 run_id、run_attempt、分片不是數字 | 以 2 結束並指名它，**不轉換**——轉換會讓兩個不同的 job 拿到同一個鍵 |
+| `--github-env` | 把 `CM_CI_KEY=<鍵>` 附加到 `GITHUB_ENV` 指的檔案（原有內容不變），並在 stdout 印出這個鍵；`GITHUB_ENV` 沒設時以 2 結束 |
+
+**它擋不住的那一件事**：`ci.yaml` 裡每個 matrix 的 job 都設了 `CM_CI_SHARD`。漏設的話同一個 job 的各個分片
+拿到同一個鍵；那由 CI 的紀錄核對（每個 job 都把自己的鍵印出來），不在這裡。
 
 **兩條掛載規格的觀察位置是 `docker run` 的參數，不是一個真的被啟動的容器**（#103）。
 worktree 的 `.git` 是一個檔案，內容是主 repo 那個 git 目錄的主機絕對路徑；只掛 repo
@@ -1567,6 +1596,11 @@ T19，因為觀察位置相同：命令列進去，結束碼與訊息出來。�
 | 任何一次執行 | 報表都印「自動檢查」「人工待驗清單」「整體」三段 |
 | `--target` | 跑對照表頂層 `target` 指的版本；`target` 沒寫或不在對照表裡，以 2 結束 |
 | `--target`，目標版本已整體通過、對照表裡之後還有版本 | 以 2 結束，指名下一版 |
+| **（#356）`CM_TEST_IMAGE_TAG` 不設** | 轉進容器時建映像與 `docker run` 用的都是 `config_manager-test-tools:local`（行為不變） |
+| **（#356）`CM_TEST_IMAGE_TAG=<tag>`** | 建映像與 `docker run` 用的都是 `config_manager-test-tools:<tag>` |
+| **（#356）`CM_TEST_IMAGE_TAG` 設了但是空的，或不是合法的映像 tag** | 以 2 結束並指名它，**不建映像** |
+| **（#356）`CM_CI_KEY=<鍵>`** | 建映像與 `docker run` 都帶 `--label cm.ci.owner=<鍵>`；不設時兩者都不帶任何 label |
+| **（#356）`CM_CI_KEY` 設了但是空的，或含小寫英數字、`-`、`_` 以外的字元** | 以 2 結束並指名它，**不建映像** |
 
 人工檢查點、簽核格式、三段報表、`--gate` 與 `--target` 的規則寫在 `doc/ACCEPTANCE-SIGNOFF.md`（#355）。
 
@@ -1837,6 +1871,8 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/backup.sh` | T26（主機端指令） | 已落地（#52） |
 | `script/restore.sh` | T26（主機端指令；「服務還在跑就拒絕」那道確認在這裡，CLI 在容器裡看不見 compose） | 已落地（#52） |
 | `script/backup_drill.sh` | T26（實際演練；只在 CI 的 Linux runner 上執行，由 `backup-drill` job 呼叫——它要 docker daemon 與真的 host 網路） | 已落地（#52） |
+| `script/ci_owner.sh` | T25、T26（`compose_smoke.sh` 與 `backup_drill.sh` 共用的擁有者處理，由它們 source，#356） | 已落地 |
+| `script/ci_bystanders.sh` | T25、T26（清理只處理本次擁有的資源的對照組，#356；只在 CI 的 Linux runner 上執行，由 `compose-smoke` 與 `backup-drill` job 呼叫） | 已落地 |
 | `script/lint_adr.sh` | T19 | 已落地 |
 | `script/lint_commit.sh` | T19 | 已落地 |
 | `script/lint_paths.sh` | T19 | 已落地 |
@@ -1852,6 +1888,7 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/coverage_gate.sh` | T19（每層門檻各自獨立、指名的只有轉紅的那一層） | 已落地 |
 | `script/coverage_badge.sh` | T19（badge 只由版本與四層的數字決定、沒量完整的數字不畫，#354） | 已落地 |
 | `script/ci_rollup.sh` | T19（該跑卻被跳過不是通過、workflow 有而 needs 沒列的 job 要擋，#358） | 已落地（CI 的 `ci-rollup` job 執行，不由 `test.sh` 執行） |
+| `script/ci_key.sh` | T19（CI 建立的資源屬於哪一個擁有者，#356） | 已落地（CI 的各 job 在建立資源之前執行，不由 `test.sh` 執行） |
 | `script/acceptance.sh` | T19（未涵蓋不是通過、指到不存在的規格要失敗，#148） | 已落地 |
 | `script/release.sh` | T19（紅的 rc 仍發得出去、紅的正式 tag 發不出去，#150） | 已落地 |
 | `script/{build,run,exec,stop,prune}.sh` | 無——見「刻意的空格」 | 已落地 |
