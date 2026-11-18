@@ -1586,7 +1586,7 @@ workflow 沒有 `run-name` 時，`pull_request` 觸發的每一次執行都顯�
 |---|---|
 | repo 自己的 `ci.yaml` 與 `release.yaml` | 通過 |
 | 沒有 `run-name` | 擋下，指名那個檔 |
-| `run-name` 是純靜態字串（沒有 `${{ … }}`；或沒加引號、空格加 `#` 之後被 YAML 當成註解，只剩靜態文字） | 擋下 |
+| `run-name` 是純靜態字串（沒有 `${{ … }}`；或沒加引號、空格加 `#` 之後被 YAML 當成註解，只剩靜態文字） | 擋下，訊息指名原因是靜態字串 |
 | `pull_request` 觸發，只帶 PR 編號或標題、沒有 head 的 SHA（`github.event.pull_request.head.sha`） | 擋下，指名觸發與缺的欄位 |
 | `pull_request` 觸發帶的是 `github.sha`（GitHub 為 PR 合出來的那一個 commit），不是 head 的 SHA | 擋下 |
 | `push`、`workflow_dispatch`、`merge_group` 觸發，沒有 `github.sha` | 擋下，指名觸發 |

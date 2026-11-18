@@ -55,7 +55,8 @@ readonly PUSH_ON=$'on:\n  push:\n    branches: [main]'
   run "${LINT}" "${WORK}/static.yaml"
 
   [ "${status}" -ne 0 ]
-  [[ "${output}" == *"static.yaml"* ]]
+  # 指名原因是靜態字串——只看結束碼的話，「push 觸發沒有 github.sha」那條也會擋下它。
+  [[ "${output}" == *"static.yaml"*"靜態"* ]]
 }
 
 @test "沒加引號時空格加 # 之後是 YAML 的註解，只剩靜態文字的 run-name 被擋下" {
@@ -65,7 +66,7 @@ readonly PUSH_ON=$'on:\n  push:\n    branches: [main]'
   run "${LINT}" "${WORK}/comment.yaml"
 
   [ "${status}" -ne 0 ]
-  [[ "${output}" == *"comment.yaml"* ]]
+  [[ "${output}" == *"comment.yaml"*"靜態"* ]]
 }
 
 @test "pull_request 觸發只帶 PR 編號與標題、沒有 head 的 SHA 時擋下，指名觸發與缺的欄位" {
