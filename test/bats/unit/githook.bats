@@ -142,6 +142,22 @@ in_repo() {
   [ "$(cat "${RECORD}/stdin")" = "refs/heads/main ${sha} refs/heads/main 0000000000000000000000000000000000000000" ]
 }
 
+@test "worktree 裡 git push 時，登記的檢查收到的參數與標準輸入，與 git 給 hook 的完全相同" {
+  passthrough_docker
+  register pre-push 10-record "$(recorder_body)"
+  git init -q --bare "${WORK}/remote.git"
+  git -C "${MAIN}" remote add origin "${WORK}/remote.git"
+  git -C "${MAIN}" worktree add -q -b wt-branch "${WORK}/wt"
+  local sha
+  sha="$(git -C "${WORK}/wt" rev-parse HEAD)"
+
+  in_repo git -C "${WORK}/wt" push -q origin wt-branch:wt-branch
+
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${RECORD}/args")" = "$(printf 'origin\n%s' "${WORK}/remote.git")" ]
+  [ "$(cat "${RECORD}/stdin")" = "refs/heads/wt-branch ${sha} refs/heads/wt-branch 0000000000000000000000000000000000000000" ]
+}
+
 @test "git push 時 docker run 帶 -i，標準輸入才進得了容器" {
   passthrough_docker
   register pre-push 10-record "$(recorder_body)"
