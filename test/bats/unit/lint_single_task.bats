@@ -85,6 +85,20 @@ pr() {
   [[ "${output}" == *"拆"* ]]
 }
 
+@test "中間隔著文字、不是列舉寫法的兩個 F 項也算兩個" {
+  run "${LINT}" subject "fix(web): 回滾恢復步驟（F37）與收起上一個結果（F38）"
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"F37"*"F38"* ]]
+}
+
+@test "中間隔著文字、不是列舉寫法的兩個 # 編號也算兩個" {
+  run "${LINT}" subject "docs(readme): 一件事（#41）與另一件事（#42）"
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"#41"*"#42"* ]]
+}
+
 @test "範圍寫法一律算多個（F33～F35、F33-35）" {
   local subject
   for subject in "fix(web): 三個問題（F33～F35）" "fix(web): 三個問題（F33-35）"; do
