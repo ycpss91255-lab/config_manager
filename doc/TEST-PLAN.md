@@ -1384,6 +1384,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/ci_rollup.sh` | `test/bats/unit/ci_rollup.bats` |
 | `script/ci_key.sh`（#356） | `test/bats/unit/ci_key.bats` |
 | `script/lint_run_name.sh`、`script/githook-checks/pre-push/10-run-name.sh`（#350） | `test/bats/unit/lint_run_name.bats` |
+| `script/lint_single_task.sh`、`script/githook-checks/commit-msg/10-single-task.sh`、`script/githook-checks/pre-push/20-single-task.sh`（#351） | `test/bats/unit/lint_single_task.bats` |
 | `script/acceptance.sh` | `test/bats/unit/acceptance.bats` |
 | `script/release.sh` | `test/bats/unit/release.bats` |
 | `justfile`（任務進入點的接線） | `test/bats/unit/justfile.bats` |
@@ -1598,6 +1599,35 @@ workflow 沒有 `run-name` 時，`pull_request` 觸發的每一次執行都顯�
 **它擋不住的那一件事**：運算式在每一種觸發下**真的印出**那個欄位。它看的是 `run-name` 有沒有引用那個欄位，引用藏在一個
 永遠不成立的條件裡也會通過；實際的名稱由 GitHub 上的執行紀錄核對。`merge_group` 的名稱這個 repo 沒有開 merge queue，
 沒有實際的執行可以核對。
+
+**`script/lint_single_task.sh` 被觀察的是「commit 主旨、PR 標題與關聯 issue 的標題，列了幾個任務編號」**（#351）。
+維護者 11/14 與 11/18 定案：只做機械判定，不靠人工審查；規則的名稱是**標題任務編號限制**——它數的是編號，**不證明**一個
+commit、PR 或 issue 只有一個任務。數法：全形數字與全形 `＃` 先轉半形；F 項是前面不是英數字的 `F<數字>`，issue 編號是
+`#<數字>`；同一個編號出現兩次算一個；範圍與列舉（`F33～F35`、`F33-35`、`F37、F38`、`#1,#2`）一律算多個。**有 sub-issue
+的 issue 一樣檢查**，沒有豁免。本機 hook 只做不必讀 issue 的部分（commit 主旨的編號與 scope）；要讀 PR 與 issue 的部分在
+CI 的 `single-task` job，讀不到就失敗、不放行。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 主旨或標題只有一個 F 項、一個 `#` 編號 | 通過 |
+| 兩個以上不同的 F 項，或兩個以上不同的 `#` 編號 | 擋下，指名數到的編號，提示拆成各自的 commit／PR／issue |
+| 範圍或列舉寫法（`F33～F35`、`F33-35`、`F37、F38`、`#1,#2`） | 擋下 |
+| 同一個編號出現兩次 | 算一個，通過 |
+| 全形數字或全形 `＃` | 轉成半形之後照樣數 |
+| `UTF8` 這種前面是英數字的 `F<數字>` | 不算 F 項 |
+| `type(a,b):` 這種列舉的 scope（`,`、`、`、`+`、`&` 或空白） | 擋下；單一 scope（含 `/`）通過 |
+| `commit-msg` | 只看訊息檔的第一行（主旨）；內文與 `#` 開頭的註解行不數 |
+| `pre-push` | 只看要推上去的**新** commit（remote 上已經有的不數）；新分支只看 remote 還沒有的；刪除分支的那一行略過 |
+| `pr`：PR 以關閉關鍵字綁定兩張以上的 issue（GitHub 回傳的 `closingIssuesReferences`） | 擋下，指名那幾張 |
+| `pr`：PR 標題或 PR 裡任一筆 commit 主旨違反編號或 scope 規則 | 擋下，指名是哪一則；merge commit 不數 |
+| `pr`：主旨或標題寫了 `F36（#345）`，issue #345 的標題與內文都沒有 `F36` | 擋下；有就通過 |
+| `pr`：關聯的 issue（關閉的，加上 PR 內文 `Refs #N`、`Relates to #N` 引用的）標題列了兩個以上任務編號 | 擋下，指名那張 issue；有 sub-issue 的 issue 一樣擋 |
+| `pr`：讀不到 PR 或某一張 issue | 失敗，不放行 |
+| 登記的兩支 hook 檢查 | commit-msg 那支把訊息檔交給 `commit-msg`，pre-push 那支把標準輸入交給 `pre-push`，判定與直接呼叫相同 |
+
+**它擋不住的**：標題只有一個編號、內容卻不只一個任務；用文字列了好幾件事、沒有寫編號；`--no-verify` 跳過的本機
+hook（CI 仍會再擋一次）。合併時 GitHub 在 squash commit 主旨加上的 `(#PR)` 不在檢查範圍：檢查的是 PR 裡的 commit 與
+PR 標題。
 
 **`script/setup_hooks.sh` 被觀察的是「打開與關掉本機 git hook 時，動了哪一份 git 設定」**（#391）。
 它只設這個 repo 的 `core.hooksPath`；這份本地設定由同一個 repo 的**所有 worktree 共用**（git-worktree 文件），
@@ -1978,6 +2008,9 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | `script/hooks/post/run.sh` | T19（#385：在主機上讀主機名稱、交給寫檔程式；候選檔本身在 T27） | 已落地 |
 | `script/setup_hooks.sh` | T19（本機 git hook 的開關：只動這個 repo 的本地 `core.hooksPath`，#391） | 已落地 |
 | `script/lint_run_name.sh` | T19（workflow 的 run-name 分得出對應的 commit，#350） | 已落地（CI 的 `run-name` job 與本機 pre-push hook 執行，不由 `test.sh --lint` 執行） |
+| `script/lint_single_task.sh` | T19（標題任務編號限制，#351） | 已落地（CI 的 `single-task` job 與本機 commit-msg／pre-push hook 執行，不由 `test.sh --lint` 執行） |
+| `script/githook-checks/commit-msg/10-single-task.sh` | T19（把訊息檔交給 `lint_single_task.sh commit-msg`，#351） | 已落地 |
+| `script/githook-checks/pre-push/20-single-task.sh` | T19（把 pre-push 的標準輸入交給 `lint_single_task.sh pre-push`，#351） | 已落地 |
 | `script/githook-checks/pre-push/10-run-name.sh` | T19（把 pre-push 的標準輸入交給 `lint_run_name.sh --pre-push`，#350） | 已落地 |
 | `script/githook.sh` | T19（本機 git hook 的共用入口，檢查轉進檢查映像，#391） | 已落地 |
 | `script/local/cfg/cfg.sh` | 無——見「刻意的空格」 | 已落地 |

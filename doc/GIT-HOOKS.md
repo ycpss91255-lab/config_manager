@@ -1,7 +1,15 @@
 # 本機 git hook
 
-`commit` 與 `push` 之前，先在本機擋下 CI 也會擋的東西（#391）。檢查本身由各自的 issue 登記（#350、#351）；
-**目前還沒有登記任何檢查**，打開之後 commit 與 push 只會印一行「目前沒有登記任何檢查，放行」。
+`commit` 與 `push` 之前，先在本機擋下 CI 也會擋的東西（#391）。檢查本身由各自的 issue 登記：
+
+| 進入點 | 檢查 | CI 上的同一支 |
+|---|---|---|
+| `commit-msg` | `10-single-task.sh`：commit 主旨的標題任務編號限制——最多一個 F 項、一個 `#` 編號、一個 scope（#351） | `single-task` job |
+| `pre-push` | `10-run-name.sh`：要推的 commit 裡，workflow 的 `run-name` 分得出對應的 commit（#350） | `run-name` job |
+| `pre-push` | `20-single-task.sh`：要推的新 commit 的主旨，同上的標題任務編號限制（#351） | `single-task` job |
+
+本機只做不必讀 issue 的部分；PR 標題、關閉關鍵字綁定的 issue 數、F 項與 issue 的對應、關聯 issue 的標題，在 CI 的
+`single-task` job 檢查。標題任務編號限制數的是編號，**不證明**一個 commit 或 PR 只有一個任務。
 
 ## 打開與關掉
 
