@@ -78,3 +78,21 @@ overlay_wiring() {
 @test "just docker bridge 把動作轉給同一支腳本，只多疊一份 bridge 網路的 compose 檔" {
   overlay_wiring bridge compose.bridge.yaml
 }
+
+# 本機 git hook 的開關（#391）。被觀察的仍是接線：`just setup` 列得出來，兩個 recipe 轉給同一支
+# 腳本的 on／off。那支腳本本身的行為在 setup_hooks.bats。
+@test "just --list 列得出 setup 命名空間（#391）" {
+  run just --justfile "${CHECKOUT}/justfile" --working-directory "${CHECKOUT}" --list
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"setup"* ]]
+}
+
+@test "just setup hooks 與 hooks-off 轉給 script/setup_hooks.sh 的 on 與 off（#391）" {
+  run just --justfile "${CHECKOUT}/justfile" --working-directory "${CHECKOUT}" --dry-run setup hooks
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"/script/setup_hooks.sh on"* ]]
+  run just --justfile "${CHECKOUT}/justfile" --working-directory "${CHECKOUT}" --dry-run setup hooks-off
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"/script/setup_hooks.sh off"* ]]
+  [ -f "${CHECKOUT}/script/setup_hooks.sh" ]
+}
