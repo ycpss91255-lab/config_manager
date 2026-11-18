@@ -26,7 +26,8 @@ services:
       dockerfile: Dockerfile
       target: ${CM_STAGE:-runtime}
     image: config_manager:${CM_TAG:-runtime}
-    container_name: config_manager_backend
+    # 後綴給 CI 用（#356）：同一個 daemon 上不同 job 的容器名不撞。部署不設，名字照舊。
+    container_name: config_manager_backend${CM_NAME_SUFFIX:-}
     # 用 host，不用 bridge。bridge 會靜默地讓整台機器的 ROS 2 discovery 失效，
     # 而這個服務就跑在它所管理參數的那些 ROS 節點旁邊——一個方便的預設值安靜地
     # 弄壞一套真實部署，正是不變式 4 為之存在的情況。真的需要隔離的部署，再明確
@@ -80,7 +81,7 @@ services:
       dockerfile: Dockerfile
       target: ${CM_STAGE:-runtime}
     image: config_manager:${CM_TAG:-runtime}
-    container_name: config_manager_frontend
+    container_name: config_manager_frontend${CM_NAME_SUFFIX:-}
     network_mode: host
     restart: unless-stopped
     # 停止訊號用 SIGINT，不用預設的 SIGTERM。entrypoint 以 exec 交棒，http.server 就是 PID 1，
