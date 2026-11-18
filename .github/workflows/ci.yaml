@@ -99,6 +99,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./script/lint_test_interfaces.sh agreed "origin/${{ github.base_ref }}"
 
+  single-task:
+    # 標題任務編號限制（#351）：PR 標題、PR 裡的 commit 主旨、關閉關鍵字綁定的 issue 數、F 項與 issue 的
+    # 對應、關聯 issue 的標題。**獨立的 job、獨立的腳本**，不併進 lint、checkpoints；本機的 commit-msg 與
+    # pre-push hook 呼叫同一支（只做不必讀 issue 的部分）。它數的是編號，不證明只有一個任務。
+    # 跑在映像之外，與 checkpoints 同一個理由：它需要 gh 讀 PR 與 issue，容器裡沒有 token。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./script/lint_single_task.sh pr "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
+
   run-name:
     # workflow 的 run-name 分得出每一次執行對應的 commit（#350）。**獨立的 job、獨立的腳本**，不併進
     # lint（維護者 11/12、11/14）：本機的 pre-push hook（script/githook-checks/pre-push/10-run-name.sh）
@@ -367,6 +382,7 @@ jobs:
       - commit-message
       - checkpoints
       - test-interfaces
+      - single-task
       - run-name
       - lint
       - unit-integration
@@ -389,5 +405,5 @@ jobs:
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
           --always "run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
-          --pull-request "commit-message checkpoints test-interfaces"
+          --pull-request "commit-message checkpoints test-interfaces single-task"
           --main-push "acceptance"
