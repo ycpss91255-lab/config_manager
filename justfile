@@ -10,6 +10,8 @@
 
 mod docker 'script/justfile.docker'
 mod test 'script/justfile.test'
+# 這個簽出的本機設定，例如本機 git hook 的開關（#391）。
+mod setup 'script/justfile.setup'
 
 # repo 擁有的東西由 repo 註冊，操作者擁有的由操作者註冊——兩者不共用同一個入口。
 #

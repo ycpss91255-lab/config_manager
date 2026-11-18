@@ -88,6 +88,7 @@
 
 - `ruff check src test`／`mypy --strict src/config_manager`／`pylint src`（10.00/10）／`pytest test/pytest --cov=src/config_manager`（`core`／`io`／`api`／`web` 各自下限 85，分開擋）
 - shell 腳本需要 **bash 4+**（macOS 用 `brew install bash`，內建的 3.2 跑不動）
+- 本機 git hook：`just setup hooks` 打開、`just setup hooks-off` 關掉；檢查同樣在容器裡跑，見 `doc/GIT-HOOKS.md`（#391）
 
 ## TDD
 

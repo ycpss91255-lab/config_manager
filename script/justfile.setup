@@ -1,0 +1,9 @@
+# 這個簽出的本機設定（#391）。
+
+# 打開本機 git hook：只設這個 repo 的 core.hooksPath（所有 worktree 共用），不動全域與系統設定
+hooks:
+    @{{justfile_directory()}}/script/setup_hooks.sh on
+
+# 關掉本機 git hook：只在本地的 core.hooksPath 是 .githooks 時拿掉它
+hooks-off:
+    @{{justfile_directory()}}/script/setup_hooks.sh off
