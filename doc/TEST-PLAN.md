@@ -1386,6 +1386,8 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/acceptance.sh` | `test/bats/unit/acceptance.bats` |
 | `script/release.sh` | `test/bats/unit/release.bats` |
 | `justfile`（任務進入點的接線） | `test/bats/unit/justfile.bats` |
+| `script/setup_hooks.sh`（#391：`just setup hooks`／`hooks-off`） | `test/bats/unit/setup_hooks.bats` |
+| `.githooks/`、`script/githook.sh`、`script/test.sh --hook`（#391：git hook 的進入點與轉進容器） | `test/bats/unit/githook.bats` |
 | `script/hooks/pre/run.sh`（#385） | `test/bats/unit/hooks_pre_run.bats` |
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
 
@@ -1558,6 +1560,7 @@ recipe 本體仍然是刻意的空格——它們是薄 wrapper，#74 寫下的�
 | `just --list cfg` | 列得出 `serve` 與 `list`，不是只有命名空間存在 |
 | 操作者自有的 `justfile.local` 缺席 | **不算錯誤**——那一個本來就可能不存在 |
 | `docker`／`test` 兩個既有命名空間 | 仍然列得出來 |
+| **（#391）`just setup hooks`／`just setup hooks-off`** | 列得出 `setup` 命名空間；兩個 recipe 轉給 `script/setup_hooks.sh on`／`off` |
 
 **「乾淨簽出」是 `git ls-files`，不是 `REPO_ROOT`。** 開發用的簽出可能真的有一份操作者
 自有的 `script/local/justfile.local`，那樣這幾則規格會因為一個不在版控裡的檔案而變綠
@@ -1571,6 +1574,46 @@ recipe 本體仍然是刻意的空格——它們是薄 wrapper，#74 寫下的�
 **`justfile` 家族不進「模組 → 測試介面」那張稽核表。** 那張表只涵蓋 `.py` 與 `.sh`
 （`script/lint_coverage_audit.sh` 把第一欄的裸名補成 `.py` 再要求檔案存在，`justfile`
 兩者都不是）。它的接線記在這裡與前面的「介面 → 測試檔」表，不需要在稽核表再列一次。
+
+**`script/setup_hooks.sh` 被觀察的是「打開與關掉本機 git hook 時，動了哪一份 git 設定」**（#391）。
+它只設這個 repo 的 `core.hooksPath`；這份本地設定由同一個 repo 的**所有 worktree 共用**（git-worktree 文件），
+所以它不宣稱只影響目前的工作目錄。全域與系統設定以受控的 `HOME`、`XDG_CONFIG_HOME`、`GIT_CONFIG_SYSTEM`
+指到暫存檔，看它們有沒有被改。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `on`，本地沒有設、也沒有繼承來的值 | 本地設成 `.githooks`；訊息寫明這份設定由所有 worktree 共用、簽出裡沒有 `.githooks/` 時不會執行 hook；全域與系統設定檔不變 |
+| `on`，再跑一次 | 設定不變，以 0 結束並說明已經啟用 |
+| `on`，在一個 worktree 裡執行 | 設在共用的本地設定：主簽出也讀得到同一個值 |
+| `on`，本地已經是別的值 | 不覆蓋；非零結束，訊息指名那個值與怎麼處理 |
+| `on`，本地沒有設、但全域有值（繼承來的） | 不覆蓋、不在本地設值；非零結束，訊息說明在本地設值會讓那個繼承來的 hook 在這個 repo 不再執行；全域設定檔不變 |
+| `on`，有單一 worktree 範圍（`--worktree`）的值 | 不覆蓋；非零結束並說明 |
+| `off`，本地是 `.githooks` | 拿掉本地那一個；全域與系統設定檔不變 |
+| `off`，本地是別的值 | 不動，說明那不是這支設的 |
+| `off`，本地沒有設、全域是 `.githooks` | 不動全域，說明全域的值要在全域那裡處理 |
+
+**`.githooks/`、`script/githook.sh` 與 `script/test.sh --hook` 被觀察的是「git 給 hook 的東西有沒有完整到達容器裡的檢查」**
+（#391）。git 在主機上觸發 hook；登記的檢查（`script/githook-checks/<進入點>/` 底下的可執行檔）在檢查映像裡跑。
+規格以**真的 git** 觸發（真的 `git commit`、對一個本機 bare repo 的真的 `git push`），一般簽出與 worktree 各一次；
+`PATH` 上的 `docker` 是一個**轉接**：記下參數，把映像後面那段指令在同一份簽出裡以 `CM_IN_TEST_IMAGE=1` 執行，
+而且**只有參數帶 `-i` 時才把標準輸入接過去**——少了 `-i`，真的 `docker run` 也收不到標準輸入。登記一支測試用的
+檢查，把它收到的參數、標準輸入與訊息檔內容寫下來，與 git 給的比對。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 沒有登記任何檢查 | 以 0 結束並說明目前沒有登記檢查；`docker` 沒有被呼叫 |
+| 一般簽出裡 `git commit`（`commit-msg`） | 登記的檢查收到 git 給的訊息檔路徑，讀得到這次的 commit 訊息 |
+| worktree 裡 `git commit`（`commit-msg`） | 同上（worktree 的訊息檔在共用的 git 目錄底下） |
+| `git push`（`pre-push`） | 登記的檢查收到的兩個參數（remote 名稱與 URL）與標準輸入的每一行，與 git 給 hook 的完全相同；`docker run` 帶 `-i` |
+| 登記了兩支檢查 | 依檔名順序都執行 |
+| 一支檢查失敗 | hook 非零結束並轉述它的原因；`git commit` 沒有產生新的 commit |
+| `docker` 不在、或 `docker run` 失敗 | hook 非零結束並說明原因；不放行 |
+| 環境裡有 `CM_TEST_LOCAL=1` | 照樣轉進容器（`docker` 被呼叫），不改在主機跑 |
+
+**這兩組規格擋不住的**：真的容器裡，worktree 的訊息檔路徑經掛載讀得到——轉接的 `docker` 跑在同一個檔案系統上，
+這件事在它那裡一定成立。掛載本身由「在 git worktree 裡轉進容器」那兩條規格（`docker run` 的參數，#103）觀察；
+真的容器裡讀到檔案的那一次，由 #391 的 PR 在 CI 的 Linux runner 上實跑一次留下證據，不是自動化的。
+`git commit --no-verify`、`git push --no-verify` 會跳過本機 hook，這組規格也觀察不到——CI 的檢查是最後一道。
 
 **`lint_checkpoints.sh` 不由 `script/test.sh` 執行，是 CI 的一個獨立 job。**
 它需要 GitHub API 讀被引用的 issue，而 `test.sh` 在容器裡跑、那裡沒有 token。規格以
