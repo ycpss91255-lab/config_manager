@@ -83,9 +83,12 @@ owner_verify() {
       || fail "容器 ${name} 的擁有者標籤與 compose 專案是「${got}」，不是 ${OWNER_KEY}" \
         "檢查 script/ci_owner.sh 寫的疊加檔有沒有接進 COMPOSE_FILE"
   done
-  got="$(docker image inspect --format '{{index .Config.Labels "cm.ci.owner"}}' "${OWNER_IMAGE}")"
+  # 核對的是第一個容器**實際用的**映像（開發模式用的是 devel，不是 OWNER_IMAGE，#392）。
+  local image
+  image="$(docker container inspect --format '{{.Config.Image}}' "$1")"
+  got="$(docker image inspect --format '{{index .Config.Labels "cm.ci.owner"}}' "${image}")"
   [[ "${got}" == "${OWNER_KEY}" ]] \
-    || fail "映像 ${OWNER_IMAGE} 的擁有者標籤是「${got}」，不是 ${OWNER_KEY}" "檢查疊加檔的 build.labels"
+    || fail "映像 ${image} 的擁有者標籤是「${got}」，不是 ${OWNER_KEY}" "檢查疊加檔的 build.labels"
   got="$(docker volume inspect --format '{{index .Labels "cm.ci.owner"}}' "${COMPOSE_PROJECT_NAME}_config_repo")"
   [[ "${got}" == "${OWNER_KEY}" ]] \
     || fail "資料卷 ${COMPOSE_PROJECT_NAME}_config_repo 的擁有者標籤是「${got}」，不是 ${OWNER_KEY}" "檢查疊加檔的 volumes"

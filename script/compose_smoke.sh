@@ -62,6 +62,11 @@ usage() {
   docker compose stop 在寬限時間內結束，不是被強制終止
 另外驗一次：建好的 runtime 映像裡 import 不到測試工具。
 
+開發模式（加 compose.dev.yaml，#392）另外從零起一次：
+  設定庫的資料卷事先不存在；經 script/run.sh 起服務的結束碼是 0，/api/mode 回 development
+  兩個容器都以非 root 執行，沒有 privileged、沒有加 capability
+  設定庫留一個 commit、docker compose down（不帶 --volumes）再起一次，HEAD 仍是那個 commit
+
 占用 8080／8081 與 compose 檔裡固定的容器名稱；已經有人在用就直接停下，不碰既有的東西。
 
   CM_CI_KEY=<鍵>  CI 用（#356）：compose 專案、映像、容器都以這個鍵命名並帶 cm.ci.owner 標籤，
@@ -372,6 +377,57 @@ owned_by_this_run() {
   ok "擁有者：專案 ${COMPOSE_PROJECT_NAME}、映像 ${IMAGE}、容器 ${BACKEND}／${FRONTEND}、設定庫的資料卷都帶 cm.ci.owner=${OWNER_KEY}"
 }
 
+# 開發模式從零起一次（#392）：README 的 `just docker dev build`／`just docker dev run` 那一條路。
+# 與 justfile 同一個接法：COMPOSE_FILE 疊上 compose.dev.yaml、經 script/run.sh 起服務。
+develop() {
+  MODE="開發"
+  COMPOSE_FILE="$(owner_files compose.yaml:compose.dev.yaml)"
+  export COMPOSE_FILE
+  # 開發映像的 tag：有擁有者鍵時帶鍵，沒有時是 compose.dev.yaml 的預設 devel。
+  if [[ -n "${OWNER_KEY}" ]]; then
+    export CM_TAG="devel-${OWNER_KEY}"
+  else
+    unset CM_TAG
+  fi
+  printf 'compose_smoke: ── 開發模式（%s）──\n' "${COMPOSE_FILE}"
+  docker compose build >/dev/null 2>&1 \
+    || fail "開發映像建不起來" "直接跑 just docker dev build 看它印出的原因"
+
+  local volume="${COMPOSE_PROJECT_NAME}_config_repo"
+  ! docker volume inspect "${volume}" >/dev/null 2>&1 \
+    || fail "資料卷 ${volume} 在開發模式起服務之前就存在，量不到「從零」" "檢查前面那幾段結束時有沒有 docker compose down --volumes"
+  launch
+  wait_for "${API}/api/mode"
+  [[ "$(curl --silent --fail --max-time 5 "${API}/api/mode" | json 'd["mode"]')" == "development" ]] \
+    || fail "開發模式起服務之後 /api/mode 不是 development" "檢查 compose.dev.yaml 的 CM_MODE"
+  ok "從零起開發模式：資料卷事先不存在，script/run.sh 結束碼 0，後端就緒、/api/mode 回 development"
+
+  local name uid host
+  for name in "${BACKEND}" "${FRONTEND}"; do
+    uid="$(docker exec "${name}" id -u)"
+    [[ "${uid}" != "0" ]] \
+      || fail "開發模式的 ${name} 以 root（uid 0）執行" "服務要以非 root 執行（ADR-00000034）；檢查 compose.dev.yaml 與 Dockerfile 的 USER"
+    host="$(docker inspect --format '{{.HostConfig.Privileged}} {{json .HostConfig.CapAdd}}' "${name}")"
+    [[ "${host}" == "false null" || "${host}" == "false []" ]] \
+      || fail "開發模式的 ${name} 的 privileged 與加上的 capability 是「${host}」" "不加 privileged、不加 capability（ADR-00000034）"
+  done
+  ok "開發模式的兩個容器都以非 root 執行，沒有 privileged、沒有加 capability"
+  owned_by_this_run
+
+  local repo="/opt/config_manager/config-repo" head
+  docker exec "${BACKEND}" git -C "${repo}" -c user.name=compose_smoke -c user.email=compose_smoke@example.invalid \
+    commit --quiet --allow-empty -m "compose_smoke: 既有資料卷要被沿用" \
+    || fail "在開發模式的設定庫留 commit 失敗" "看 docker compose logs backend"
+  head="$(docker exec "${BACKEND}" git -C "${repo}" rev-parse HEAD)"
+  docker compose down --remove-orphans >/dev/null 2>&1
+  launch
+  wait_for "${API}/api/mode"
+  [[ "$(docker exec "${BACKEND}" git -C "${repo}" rev-parse HEAD)" == "${head}" ]] \
+    || fail "docker compose down（不帶 --volumes）再起之後，設定庫的 HEAD 不是剛才留下的 ${head}" "既有資料卷要照原樣沿用；檢查 script/run.sh 與 hook 有沒有動到資料卷"
+  ok "開發模式下既有的資料卷照原樣沿用：down（不帶 --volumes）再起之後 HEAD 仍是 ${head:0:7}"
+  docker compose down --volumes --remove-orphans >/dev/null 2>&1
+}
+
 image_has_no_test_tooling() {
   MODE="映像"
   local module
@@ -417,9 +473,10 @@ main() {
   image_has_no_test_tooling
   exercise host "compose.yaml"
   exercise bridge "compose.yaml:compose.bridge.yaml"
+  develop
 
   MODE="總結"
-  ok "host 與 bridge 兩種網路的服務實測都過了"
+  ok "host 與 bridge 兩種網路的服務實測、開發模式從零起服務都過了"
 }
 
 main "$@"
