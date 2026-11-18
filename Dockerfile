@@ -119,6 +119,19 @@ RUN mkdir -p /run/config_manager \
     && chown "${USER_NAME}:${USER_NAME}" /run/config_manager \
     && chmod 0700 /run/config_manager
 
+# config-repo 具名 volume 的掛載點（compose.yaml：config_repo → 這個路徑）。**預建成服務
+# 使用者擁有**：Docker 首次把一個空的具名 volume 掛到映像裡既有的目錄時，會用該目錄的
+# 擁有權與權限初始化 volume。沒有這一步，具名 volume 由 root:root 建、服務（uid 1000）對它
+# 不可寫，首啟 `git init` 就 EACCES（#232 發現3）。有了它，volume 繼承 uid 1000 擁有權、
+# 首啟得以初始化。只涵蓋**具名 volume 首次掛載**；bind mount 保留主機端擁有權（不複製映像
+# 的），那屬部署者責任、記在部署文件（#146 的掛載約定）。
+#
+# 放在 devel 與 runtime 共用的這一層（#392）：先前只有 runtime 有，開發映像裡沒有這個目錄，
+# 於是開發模式從零起服務時資料卷由 root 擁有、backend 起不來（CI 上對照實驗：run 44224144567）。
+# 修法是讓開發映像也有同一個掛載點，不是讓服務改以 root 執行。
+RUN mkdir -p "${APP_ROOT}/config-repo" \
+    && chown "${USER_NAME}:${USER_NAME}" "${APP_ROOT}/config-repo"
+
 # ── devel ───────────────────────────────────────────────────────────────────
 FROM devel-base AS devel
 
@@ -170,14 +183,7 @@ RUN chmod +x /entrypoint.sh
 COPY --chown=${USER_NAME}:${USER_NAME} src/ ${APP_ROOT}/src/
 COPY --chown=${USER_NAME}:${USER_NAME} pyproject.toml ${APP_ROOT}/pyproject.toml
 
-# config-repo 具名 volume 的掛載點（compose.yaml：config_repo → 這個路徑）。**預建成服務
-# 使用者擁有**：Docker 首次把一個空的具名 volume 掛到映像裡既有的目錄時，會用該目錄的
-# 擁有權與權限初始化 volume。沒有這一步，具名 volume 由 root:root 建、服務（uid 1000）對它
-# 不可寫，首啟 `git init` 就 EACCES（#232 發現3）。有了它，volume 繼承 uid 1000 擁有權、
-# 首啟得以初始化。只涵蓋**具名 volume 首次掛載**；bind mount 保留主機端擁有權（不複製映像
-# 的），那屬部署者責任、記在部署文件（#146 的掛載約定）。
-RUN mkdir -p "${APP_ROOT}/config-repo" \
-    && chown "${USER_NAME}:${USER_NAME}" "${APP_ROOT}/config-repo"
+# config-repo 的掛載點在 devel-base 預建（見那裡，#232 發現3、#392）。
 
 ENV PYTHONPATH="${APP_ROOT}/src"
 WORKDIR ${APP_ROOT}
@@ -299,7 +305,8 @@ RUN if CM_CONFIG_REPO=/tmp/blind-repo CM_ROLE=backend /entrypoint.sh true 2>/dev
 
 # config-repo 具名 volume 的掛載點在映像裡預建成服務使用者擁有（#232 發現3）——這正是 Docker
 # 首次填一個空的具名 volume 時據以繼承擁有權的來源。建置階段掛不了 volume，所以這裡釘住那個
-# 等價前提：掛載點的擁有者 == 服務使用者（uid）。若日後有人拿掉 runtime 階段的 mkdir/chown，
-# 這一步會紅。真正的「volume 首掛繼承 → uid 1000 得以 git init」是執行期行為，見 PR 的本機驗證。
+# 等價前提：掛載點的擁有者 == 服務使用者（uid）。若日後有人拿掉 devel-base 階段的 mkdir/chown，
+# 這一步會紅。真正的「volume 首掛繼承 → uid 1000 得以 git init」是執行期行為：開發模式由
+# script/compose_smoke.sh 在 CI 上從零起一次（#392）。
 RUN test "$(stat -c '%u' "${APP_ROOT}/config-repo")" = "$(id -u)" \
     && echo 'Dockerfile: config-repo 掛載點由服務使用者擁有，具名 volume 首填將繼承之（#232 發現3）'
