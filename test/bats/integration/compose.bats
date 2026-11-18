@@ -180,6 +180,28 @@ VARS=()
   done
 }
 
+# 容器名的後綴（#356）：CI 以擁有者的鍵當後綴，讓同一個 daemon 上不同 job 的容器名不撞；
+# 不設時是部署一直以來的那兩個名字，預設不變。
+
+@test "不設 CM_NAME_SUFFIX 時容器名是 config_manager_backend 與 config_manager_frontend（#356）" {
+  resolve compose.yaml
+
+  [ "$(ask '(s["backend"]["container_name"], s["frontend"]["container_name"])')" \
+    = "('config_manager_backend', 'config_manager_frontend')" ]
+}
+
+@test "設了 CM_NAME_SUFFIX 時三種組合的容器名都加上它（#356）" {
+  local combo
+  for combo in "compose.yaml" "compose.yaml compose.dev.yaml" "compose.yaml compose.bridge.yaml"; do
+    VARS=(CM_NAME_SUFFIX=-cm-4242-1-compose-smoke)
+    # shellcheck disable=SC2086 # 刻意拆成多個檔名
+    resolve ${combo}
+    [ "${status}" -eq 0 ]
+    [ "$(ask '(s["backend"]["container_name"], s["frontend"]["container_name"])')" \
+      = "('config_manager_backend-cm-4242-1-compose-smoke', 'config_manager_frontend-cm-4242-1-compose-smoke')" ]
+  done
+}
+
 @test "疊上 bridge 檔不再要求 CM_HOSTNAME（#385）" {
   resolve compose.yaml compose.bridge.yaml
 

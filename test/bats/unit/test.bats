@@ -305,6 +305,95 @@ in_image() {
   [ ! -e "${DOCKER_ARGV}" ]
 }
 
+# 測試映像的 tag 與擁有者標籤（#356）。CI 的每個 job 用自己的鍵當 tag、當標籤，同一個 daemon
+# 上別的 job 建的映像就蓋不掉這一個。被觀察的仍是 dispatch_to_container 組出來的 argv：
+# 假 docker 把建映像與 docker run 兩次呼叫的參數都記下來，所以同一個映像名出現兩次，就是
+# 兩次都用了它。
+
+@test "不設 CM_TEST_IMAGE_TAG 時建映像與 docker run 都用 :local（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "$(grep -cxF -- 'config_manager-test-tools:local' "${DOCKER_ARGV}")" -eq 2 ]
+}
+
+@test "CM_TEST_IMAGE_TAG 設了時建映像與 docker run 都用那個 tag，不是 :local（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate CM_TEST_IMAGE_TAG=cm-4242-1-lint "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "$(grep -cxF -- 'config_manager-test-tools:cm-4242-1-lint' "${DOCKER_ARGV}")" -eq 2 ]
+  ! grep -qxF -- 'config_manager-test-tools:local' "${DOCKER_ARGV}"
+}
+
+@test "CM_TEST_IMAGE_TAG 設了但是空的時以 2 結束並指名它，不建映像（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate CM_TEST_IMAGE_TAG= "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_TEST_IMAGE_TAG"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}
+
+@test "CM_TEST_IMAGE_TAG 不是合法的映像 tag 時以 2 結束並指名它，不建映像（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate CM_TEST_IMAGE_TAG=a:b "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_TEST_IMAGE_TAG=a:b"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}
+
+@test "CM_CI_KEY 設了時建映像與 docker run 都帶 cm.ci.owner 標籤（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate CM_CI_KEY=cm-4242-1-lint "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "$(grep -cxF -- 'cm.ci.owner=cm-4242-1-lint' "${DOCKER_ARGV}")" -eq 2 ]
+}
+
+@test "不設 CM_CI_KEY 時建映像與 docker run 都不帶任何標籤（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate "${MAIN}/script/test.sh" --lint no-such-linter
+
+  ! grep -qxF -- '--label' "${DOCKER_ARGV}"
+}
+
+@test "CM_CI_KEY 含小寫英數字、- 與 _ 以外的字元時以 2 結束並指名它，不建映像（#356）" {
+  link_tool git
+  link_tool id
+  fake_docker
+  make_repo
+
+  gate CM_CI_KEY='cm 1' "${MAIN}/script/test.sh" --lint no-such-linter
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"CM_CI_KEY"* ]]
+  [ ! -e "${DOCKER_ARGV}" ]
+}
+
 # 建置紀錄要逐層留下來，CI 的日誌才看得出每一層是不是取自快取（#358 定案 3）。
 # 以下兩條的假 docker 在建映像那一次多做一件事：往 fd 2 印一行建置紀錄，或以 17
 # 結束。17 不是 docker 會用的碼，看到它就知道結束碼是照傳、不是另外寫死的。
