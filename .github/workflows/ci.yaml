@@ -27,6 +27,15 @@
 
 name: CI
 
+# 每一次執行的名稱分得出對應的 commit（#350）：pull_request 帶 PR 編號、標題與 head 的完整 SHA
+# （github.sha 是 GitHub 為 PR 合出來的那一個，不是推上來的 commit）；其餘觸發帶事件、ref 與 github.sha。
+# 寫成 >- 區塊：值裡的 # 若在一般寫法裡會被 YAML 當成註解。判定標準由 script/lint_run_name.sh 檢查
+# （下面的 run-name job，與本機的 pre-push hook 同一支）。
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+  && format('PR #{0} {1} @ {2}', github.event.pull_request.number, github.event.pull_request.title, github.event.pull_request.head.sha)
+  || format('{0} {1} @ {2}', github.event_name, github.ref_name, github.sha) }}
+
 on:
   push:
     branches: [main]
@@ -89,6 +98,15 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: ./script/lint_test_interfaces.sh agreed "origin/${{ github.base_ref }}"
+
+  run-name:
+    # workflow 的 run-name 分得出每一次執行對應的 commit（#350）。**獨立的 job、獨立的腳本**，不併進
+    # lint（維護者 11/12、11/14）：本機的 pre-push hook（script/githook-checks/pre-push/10-run-name.sh）
+    # 呼叫同一支。跑在映像之外，與 commit-message 同一個理由：它只需要 bash 與 python3。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./script/lint_run_name.sh
 
   # ── 不帶參數的 ./script/test.sh，拆成平行的幾段（#358）────────────────────
   #
@@ -349,6 +367,7 @@ jobs:
       - commit-message
       - checkpoints
       - test-interfaces
+      - run-name
       - lint
       - unit-integration
       - api
@@ -369,6 +388,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
-          --always "lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
+          --always "run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
           --pull-request "commit-message checkpoints test-interfaces"
           --main-push "acceptance"

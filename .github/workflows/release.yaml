@@ -16,6 +16,9 @@
 
 name: Release
 
+# 每一次執行的名稱帶 tag 與完整的 commit SHA（#350，script/lint_run_name.sh 檢查）。
+run-name: "Release ${{ github.ref_name }} @ ${{ github.sha }}"
+
 on:
   push:
     # 所有 v 開頭的 tag 都進來，形狀由 release.sh 判定。在這裡用更嚴的樣式，
