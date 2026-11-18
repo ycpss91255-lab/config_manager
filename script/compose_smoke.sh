@@ -374,7 +374,8 @@ exercise() {
 owned_by_this_run() {
   [[ -n "${OWNER_KEY}" ]] || return 0
   owner_verify "${BACKEND}" "${FRONTEND}"
-  ok "擁有者：專案 ${COMPOSE_PROJECT_NAME}、映像 ${IMAGE}、容器 ${BACKEND}／${FRONTEND}、設定庫的資料卷都帶 cm.ci.owner=${OWNER_KEY}"
+  # 印容器實際用的映像：開發模式用的是 devel，不是 IMAGE（#392）。
+  ok "擁有者：專案 ${COMPOSE_PROJECT_NAME}、映像 $(docker container inspect --format '{{.Config.Image}}' "${BACKEND}")、容器 ${BACKEND}／${FRONTEND}、設定庫的資料卷都帶 cm.ci.owner=${OWNER_KEY}"
 }
 
 # 開發模式從零起一次（#392）：README 的 `just docker dev build`／`just docker dev run` 那一條路。

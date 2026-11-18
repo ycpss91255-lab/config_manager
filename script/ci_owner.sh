@@ -34,6 +34,7 @@ owner_init() {
   OWNER_LABELS=(--label "cm.ci.owner=${OWNER_KEY}")
   export CM_TAG="runtime-${OWNER_KEY}"
   export CM_NAME_SUFFIX="${OWNER_SUFFIX}"
+  # shellcheck disable=SC2034 # 由 source 這支的腳本讀（它們的 IMAGE）
   OWNER_IMAGE="config_manager:${CM_TAG}"
 }
 
