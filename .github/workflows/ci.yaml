@@ -13,6 +13,15 @@
 # 來由：CI 曾經把每一支 linter 各自複述成一個 YAML step，而 `just test lint` 會跳過
 # 主機沒有的工具，於是 pipeline 連續六次全紅，本機每次執行卻都報乾淨。base 把同一個
 # 教訓寫在它的 script/test/drivers/hadolint.sh 裡。一個環境，兩個呼叫者。
+#
+# **每個資源有明確的擁有者**（#356）：會建映像、compose 專案、容器或資料卷的 job，第一步先以
+# script/ci_key.sh 算出自己的鍵（run_id、run_attempt、job id，matrix 的 job 再加分片
+# CM_CI_SHARD），寫進 CM_CI_KEY。映像 tag、compose 專案名與容器名都帶這個鍵，資源都帶
+# cm.ci.owner=<鍵> 標籤。重跑時 run_attempt 不同，名稱全部換新。
+#
+# **埠沒有隔離**：compose 的服務聽固定的 127.0.0.1:8080／8081，compose_smoke.sh 的對照服務聽
+# 18099。GitHub-hosted runner 每個 job 一台新的 VM，所以這裡不衝突；同一個 docker daemon 上
+# 併發時（例如 self-hosted runner）仍會衝突。埠的隔離拆到 #390 追蹤。
 
 name: CI
 
@@ -99,9 +108,11 @@ jobs:
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --lint
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
 
   unit-integration:
     # test_api.py 與 test_web.py 以外的全部 pytest 規格：unit 與 integration。
@@ -112,9 +123,11 @@ jobs:
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --part fast
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
       - uses: actions/upload-artifact@v7
         with:
           name: ci-part-fast
@@ -134,15 +147,20 @@ jobs:
       matrix:
         shard: [1, 2, 3]
     runs-on: ubuntu-latest
+    # 分片識別進擁有者的鍵（#356）：少了它，三份分片拿到同一個鍵。
+    env:
+      CM_CI_SHARD: ${{ strategy.job-index }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --part api "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOB_TOTAL: ${{ strategy.job-total }}
       - uses: actions/upload-artifact@v7
@@ -160,9 +178,11 @@ jobs:
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --part bats
         env:
           CM_TEST_IMAGE_CACHE: gha-write
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
 
   web-e2e:
     # test_web.py（瀏覽器端到端）依收集順序輪流分成幾份，一份一個 job，分法與 api 相同。
@@ -172,15 +192,20 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
+    # 分片識別進擁有者的鍵（#356）：少了它，六份分片拿到同一個鍵。
+    env:
+      CM_CI_SHARD: ${{ strategy.job-index }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --part web "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOB_TOTAL: ${{ strategy.job-total }}
       - uses: actions/upload-artifact@v7
@@ -207,9 +232,11 @@ jobs:
           pattern: ci-part-*
           path: ci-parts/
           merge-multiple: true
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/test.sh --part gate
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
       # 四層覆蓋率與門檻結果（#354）：coverage_gate.sh 判完之後寫在 coverage/summary/，這裡只把
       # 表格放進 Job Summary、把那個目錄上傳成 artifact。過不過都放——沒過的時候正是最需要看
       # 數字的時候。gate 沒跑到（例如有規格沒被任何一段跑過）時沒有這份檔案，這兩步跟著失敗，
@@ -245,7 +272,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/acceptance.sh --target --gate automated
+        env:
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
 
   build:
     runs-on: ubuntu-latest
@@ -254,11 +284,13 @@ jobs:
       # runtime-test 是 FROM runtime，並在它自己的建置過程中跑 bats 的 smoke 規格，
       # 所以建置是綠的就代表可部署的產物真的起得來——不只是編得過。與跑 test.sh 的
       # 那幾段分開，因為它建的是應用映像，不是工具映像。
-      - run: docker build --target runtime-test -t config_manager:runtime-test .
+      - run: ./script/ci_key.sh --github-env
+      # tag 與標籤帶這個 job 的擁有者鍵（#356）。
+      - run: docker build --target runtime-test -t "config_manager:runtime-test-${CM_CI_KEY:?}" --label "cm.ci.owner=${CM_CI_KEY:?}" .
       # devel 也要建，而且不是為了對稱：runtime-test 的鏈是 devel-base -> runtime，
       # 永遠不會進到 devel。於是每個開發者每天都在建的那個階段，正好是 CI 從來不建的
       # 那一個，而它從存在的第一天起就是壞的。
-      - run: docker build --target devel -t config_manager:devel .
+      - run: docker build --target devel -t "config_manager:devel-${CM_CI_KEY:?}" --label "cm.ci.owner=${CM_CI_KEY:?}" .
 
   compose-smoke:
     # compose 的服務實測（T25 的第二個觀察位置，#51）：host 與 bridge 各**實際起一次**，量
@@ -271,6 +303,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/compose_smoke.sh
 
   backup-drill:
@@ -284,6 +317,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - run: ./script/ci_key.sh --github-env
       - run: ./script/backup_drill.sh
 
   ci-rollup:
