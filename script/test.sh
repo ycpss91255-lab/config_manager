@@ -689,11 +689,11 @@ if twice:
 if unknown:
     problems.append(f"{len(unknown)} 條跑過的規格不在這次的收集裡：{listed(unknown)}")
 
-# ── web 覆蓋率的合併 ──────────────────────────────────────────────────────
-# 每一段的報告是同一份 index.html 的行覆蓋率。「有程式碼的行」只由原始碼決定
-# （test/pytest/system/v8_coverage.py 的 code_lines），所以每一段的那一組行相同，
-# 合起來「沒被執行到的行」就是各段的交集。這個前提先驗：同一個檔案、同樣的行數、
-# 每一份自己的數字加得起來。對不上就停，不猜。
+# ── web 覆蓋率的合併（逐檔，#359）──────────────────────────────────────────
+# 每一段的報告逐檔列出 web 底下每一份腳本的行覆蓋率。「有程式碼的行」只由原始碼決定
+# （test/pytest/system/v8_coverage.py 的 code_lines），所以同一個檔在每一段的那一組行相同，
+# 合起來「沒被執行到的行」就是各段的交集。這個前提先驗：每一段列的檔案相同、同一個檔的內容
+# （sha256）與程式碼行數相同、每一份自己的數字加得起來。對不上就停，不猜。
 reports = []
 for path in web_parts:
     report_file = path / "web.json"
@@ -701,13 +701,45 @@ for path in web_parts:
         reports.append((path.name, json.loads(report_file.read_text(encoding="utf-8"))))
 
 for name, report in reports:
-    if report["covered_lines"] + len(report["uncovered_lines"]) != report["code_lines"]:
-        problems.append(f"ci-parts/{name}/web.json 自己的數字加不起來，格式可能改了")
-if reports:
-    files = {report["file"] for _, report in reports}
-    code = {report["code_lines"] for _, report in reports}
-    if len(files) != 1 or len(code) != 1:
-        problems.append(f"各段的 web 報告不是同一份檔案、同樣的行數：檔案 {sorted(files)}、行數 {sorted(code)}")
+    files = report.get("files")
+    if not isinstance(files, list):
+        problems.append(f"ci-parts/{name}/web.json 沒有逐檔的 files，格式可能改了")
+        continue
+    fields = {"file", "sha256", "loaded", "covered_lines", "code_lines", "uncovered_lines"}
+    if any(not isinstance(entry, dict) or fields - set(entry) for entry in files):
+        problems.append(f"ci-parts/{name}/web.json 有檔案缺了 {'、'.join(sorted(fields))} 之中的欄位，格式可能改了")
+        report["files"] = None
+        continue
+    for entry in files:
+        if entry["covered_lines"] + len(entry["uncovered_lines"]) != entry["code_lines"]:
+            problems.append(f"ci-parts/{name}/web.json 的 {entry['file']} 自己的數字加不起來，格式可能改了")
+    if (sum(entry["code_lines"] for entry in files), sum(entry["covered_lines"] for entry in files)) != (
+        report["code_lines"],
+        report["covered_lines"],
+    ):
+        problems.append(f"ci-parts/{name}/web.json 各檔加起來與總數對不上，格式可能改了")
+
+shapes = {
+    name: {entry["file"]: (entry["sha256"], entry["code_lines"]) for entry in report["files"]}
+    for name, report in reports
+    if isinstance(report.get("files"), list)
+}
+if shapes:
+    base_name, base = next(iter(shapes.items()))
+    for name, shape in shapes.items():
+        extra = sorted(set(shape) - set(base))
+        lacking = sorted(set(base) - set(shape))
+        if extra or lacking:
+            problems.append(
+                f"ci-parts/{name}/web.json 列的檔案與 ci-parts/{base_name}/ 不同："
+                f"多了 {listed(extra) or '（無）'}，少了 {listed(lacking) or '（無）'}"
+            )
+            continue
+        for file in sorted(shape):
+            if shape[file][0] != base[file][0]:
+                problems.append(f"{file} 在 ci-parts/{name}/ 與 ci-parts/{base_name}/ 的內容不同（sha256 不一樣）")
+            elif shape[file][1] != base[file][1]:
+                problems.append(f"{file} 在 ci-parts/{name}/ 與 ci-parts/{base_name}/ 的程式碼行數不同")
 
 if problems:
     print("test.sh: 各段合不起來，覆蓋率沒有判：", file=sys.stderr)
@@ -719,20 +751,37 @@ if problems:
     )
     sys.exit(1)
 
-uncovered = set(reports[0][1]["uncovered_lines"])
-for _, report in reports[1:]:
-    uncovered &= set(report["uncovered_lines"])
-code_lines = reports[0][1]["code_lines"]
-covered = code_lines - len(uncovered)
+merged = []
+for first in reports[0][1]["files"]:
+    entries = [
+        next(entry for entry in report["files"] if entry["file"] == first["file"]) for _, report in reports
+    ]
+    uncovered = set(first["uncovered_lines"])
+    for entry in entries[1:]:
+        uncovered &= set(entry["uncovered_lines"])
+    merged.append(
+        {
+            "file": first["file"],
+            "sha256": first["sha256"],
+            "loaded": any(entry["loaded"] for entry in entries),
+            "covered_lines": first["code_lines"] - len(uncovered),
+            "code_lines": first["code_lines"],
+            "uncovered_lines": sorted(uncovered),
+        }
+    )
+# 全部分片都沒有載入的模組：算進分母、覆蓋 0 行，並指名（#359 定案 3）。
+unloaded = [entry["file"] for entry in merged if not entry["loaded"]]
+code_lines = sum(entry["code_lines"] for entry in merged)
+covered = sum(entry["covered_lines"] for entry in merged)
 web_out.write_text(
     json.dumps(
         {
             "area": "web",
-            "file": reports[0][1]["file"],
+            "files": merged,
+            "unloaded": unloaded,
             "covered_lines": covered,
             "code_lines": code_lines,
             "percent": round(100 * covered / code_lines, 2) if code_lines else 0.0,
-            "uncovered_lines": sorted(uncovered),
         },
         ensure_ascii=False,
         indent=2,
@@ -745,8 +794,10 @@ data_out.write_text(
 )
 print(
     f"test.sh: {len(parts)} 段、{len(collected)} 條規格，每一條恰好被一段跑過；"
-    f"web 覆蓋率由 {len(reports)} 份報告合併"
+    f"web 覆蓋率由 {len(reports)} 份報告逐檔合併（{len(merged)} 個檔）"
 )
+if unloaded:
+    print(f"test.sh: 全部分片都沒有載入的 web 模組，已算進分母、覆蓋 0 行：{'、'.join(unloaded)}")
 PY
 
   local -a files=()

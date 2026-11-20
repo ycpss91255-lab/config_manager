@@ -1,14 +1,14 @@
-"""T11 — 瀏覽器端到端行為，並順帶量出 `web/index.html` 的行覆蓋率。
+"""T11 — 瀏覽器端到端行為，並順帶量出 `web/` 底下腳本的行覆蓋率。
 
 T11 先前**沒有執行通路**：頁面裡的 `data-testid` 是給未來的測試準備的，沒有測試在用
 它們（TEST-PLAN「已知的量測缺口」、#99）。這個檔案就是那條通路。
 
 ## 為什麼是 Playwright 的 V8 覆蓋率
 
-行內 JS 不由 Python 執行，pytest-cov 看不到它。而 PDF §3.3 說前端「不需框架也不需
-打包流程」，所以 c8／nyc 那條 npm 路線是被排除的——為了量一個數字而引進一整套 Node
-工具鏈，代價比量到的東西貴。Chromium 自己會算：CDP 的 `Profiler` 領域直接給得出來，
-翻成行的部分在 `v8_coverage.py`。
+頁面的 JS（#359 起是 `web/js/` 底下的原生 ES 模組）不由 Python 執行，pytest-cov
+看不到它。而 PDF §3.3 說前端「不需框架也不需打包流程」，所以 c8／nyc 那條 npm 路線
+是被排除的——為了量一個數字而引進一整套 Node 工具鏈，代價比量到的東西貴。Chromium
+自己會算：CDP 的 `Profiler` 領域直接給得出來，翻成行的部分在 `v8_coverage.py`。
 
 ## 量的是真的在瀏覽器裡跑的那一份
 
@@ -32,6 +32,7 @@ import contextlib
 import datetime
 import functools
 import gc
+import hashlib
 import http.server
 import json
 import os
@@ -50,7 +51,7 @@ import pytest
 import uvicorn
 from playwright.sync_api import Error as BrowserError
 from playwright.sync_api import sync_playwright
-from v8_coverage import line_coverage
+from v8_coverage import code_lines, line_coverage
 
 from config_manager.api.lock import LockBox
 from config_manager.api.routes import create_app
@@ -101,7 +102,7 @@ _DEPLOYED = {"a": "a: 1\n", "b": "b: 2\n", "c": None}
 
 @pytest.fixture(scope="session")
 def site():
-    """供應 index.html 的靜態伺服器。
+    """供應 web/ 目錄的靜態伺服器：index.html 與它載入的模組、樣式（#359）。
 
     與 backend 分屬兩個 port，因為部署起來就是兩個容器（設計文件 §3.1）。用同一個
     port 會讓跨來源這件事在測試裡消失，而 CORS 設錯正是使用者真的會撞到的失敗。
@@ -110,6 +111,35 @@ def site():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+_PREFIX = "/config_manager"
+
+
+class _PrefixedHandler(http.server.SimpleHTTPRequestHandler):
+    """把 web/ 放在 `/config_manager/` 底下供應（#361 的單一入口會有這個前綴）。
+
+    前綴以外一律 404。
+    """
+
+    def translate_path(self, path):
+        if path == _PREFIX or path.startswith(_PREFIX + "/"):
+            return super().translate_path(path[len(_PREFIX) :] or "/")
+        return str(_WEB_DIR / "__not_under_the_prefix__")
+
+
+@pytest.fixture(scope="session")
+def prefixed_site():
+    """同一個 web/，但網址多了 `/config_manager` 前綴（#359 定案 5）。
+
+    模組之間、頁面對模組與樣式的路徑都是相對的；寫成絕對路徑（`/js/main.js`）的話，在這裡會
+    打到前綴以外、拿到 404，頁面的載入檢查就會指名它。
+    """
+    handler = functools.partial(_PrefixedHandler, directory=str(_WEB_DIR))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_address[1]}{_PREFIX}"
     server.shutdown()
 
 
@@ -182,11 +212,12 @@ def runtime(tmp_path):
 
 
 @pytest.fixture
-def api(repo, site, runtime):
-    """真的 FastAPI 服務，只放行頁面所在的那個來源。"""
+def api(repo, site, prefixed_site, runtime):
+    """真的 FastAPI 服務，只放行頁面所在的來源：一般的那個站，與路徑前綴底下的那個站（#359）。"""
     port = _free_port()
+    prefixed_origin = prefixed_site.removesuffix(_PREFIX)
     config = uvicorn.Config(
-        create_app(str(repo), (site,), runtime_dir=str(runtime)),
+        create_app(str(repo), (site, prefixed_origin), runtime_dir=str(runtime)),
         host="127.0.0.1", port=port, log_level="error",
     )
     server = uvicorn.Server(config)
@@ -205,56 +236,228 @@ def api(repo, site, runtime):
 # ── 覆蓋率的收集 ────────────────────────────────────────────────────────────
 
 
+_WEB_PREFIX = "src/config_manager/web"
+_INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.S)
+
+
+def _web_scripts() -> dict[str, str]:
+    """應納入 web 覆蓋率的每一份原始碼（#359）：鍵是相對 `web/` 的路徑，值是那個檔的原文。
+
+    清單由原始碼決定，不由 V8 決定：web/ 底下每一個 `.js`，以及含行內 `<script>` 的 `.html`。
+    一個沒有任何頁面載入的模組不會出現在 V8 的報告裡；只看 V8 的話，它的分母跟著消失，覆蓋率
+    反而變高。讀不出原文（不是 UTF-8）就是分母算不出來，量測失敗並指名，不自己猜。
+    """
+    scripts = {}
+    for path in sorted(_WEB_DIR.rglob("*")):
+        if not path.is_file() or path.suffix not in (".js", ".html"):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise RuntimeError(
+                f"web 覆蓋率的分母算不出來：{path} 不是 UTF-8（{error}）。"
+                "下一步：把那個檔存成 UTF-8"
+            ) from error
+        if path.suffix == ".html" and not _INLINE_SCRIPT.search(text):
+            continue  # 沒有行內腳本的頁面（help.html、拆分後的 index.html）不是量測的對象
+        scripts[path.relative_to(_WEB_DIR).as_posix()] = text
+    return scripts
+
+
+def _script_code_lines(name: str, text: str) -> set[int]:
+    """一份原始碼的程式碼行，行號指那個檔自己（.html 的行內腳本換算成 .html 的行號）。"""
+    if not name.endswith(".html"):
+        return code_lines(text)
+    numbers: set[int] = set()
+    for match in _INLINE_SCRIPT.finditer(text):
+        offset = text.count("\n", 0, match.start(1))
+        numbers |= {number + offset for number in code_lines(match.group(1))}
+    return numbers
+
+
+def _script_offset(name: str, disk: str, source: str) -> int:
+    """V8 給的這份 script 的第 1 行，在 repo 的那個檔裡是第幾行，減一。
+
+    `.js` 必須與 repo 裡那一份逐字相同（行號才對得回去）；`.html` 的行內腳本以內容在檔案裡
+    定位，不以 `<script>` 的行號——後者要再假設「內容從標籤的下一行開始」。對不上就是頁面跑的
+    不是 repo 裡這一份，量出來的行號沒有意義，停下來。
+    """
+    if not name.endswith(".html"):
+        if source != disk:
+            raise RuntimeError(f"頁面載入的 {name} 與 repo 裡那一份不同，行號對不回去")
+        return 0
+    start = disk.find(source)
+    if start < 0:
+        raise RuntimeError(f"頁面上的行內腳本在 repo 的 {name} 裡找不到，行號對不回去")
+    return disk.count("\n", 0, start)
+
+
+def _ran(entry: dict) -> bool:
+    """V8 的這一份 script 有沒有真的執行：從第 0 個字元起的那一段是它的頂層，跑過就算。"""
+    for function in entry["functions"]:
+        top = function["ranges"][0] if function["ranges"] else None
+        if top is not None and top["startOffset"] == 0 and top["count"] > 0:
+            return True
+    return False
+
+
 class _WebCoverage:
-    """把每個頁面執行到的行聯集起來。
+    """把每個頁面執行到的行逐檔聯集起來（#359 起是 web/ 底下的多個檔）。
 
     一則規格一個頁面，同一份 script 於是被載入很多次。合併的正確做法是聯集
     「執行過的行」——先各自算成百分比再平均，得到的是一個沒有意義的數字。
     """
 
     def __init__(self) -> None:
-        self.covered: set[int] = set()
-        self.code: set[int] = set()
+        self.scripts = _web_scripts()
+        self.covered: dict[str, set[int]] = {name: set() for name in self.scripts}
+        self.loaded: set[str] = set()
 
-    def absorb(self, cdp, page_url: str) -> None:
+    def absorb(self, cdp, page_url: str) -> set[str]:
+        """把這一頁執行到的行併進來，回傳 V8 看到真的執行過（頂層跑過）的檔。"""
+        # 頁面所在的目錄：模組與行內腳本的網址都以它開頭。不以它開頭的（規格自己 evaluate 的、
+        # add_init_script 的）不是 web/ 底下的檔，不算。
+        base = page_url.rsplit("/", 1)[0] + "/"
+        evaluated: set[str] = set()
         for entry in cdp.send("Profiler.takePreciseCoverage")["result"]:
-            if entry.get("url") != page_url:
+            url = entry.get("url") or ""
+            if not url.startswith(base):
                 continue
+            name = url[len(base) :].split("?", 1)[0].split("#", 1)[0]
+            if _ran(entry):
+                evaluated.add(name)
+            if name not in self.scripts:
+                raise RuntimeError(
+                    f"頁面載入了 {url}，但它不在應納入 web 覆蓋率的清單裡"
+                    f"（{_WEB_PREFIX}/ 底下的 .js 與含行內腳本的 .html）。"
+                    "下一步：把它放進 web/，或查清楚它是從哪裡來的"
+                )
             try:
                 fetched = cdp.send("Debugger.getScriptSource", {"scriptId": entry["scriptId"]})
             except BrowserError:
                 # 頁面重新整理過：舊文件那份 script 已被回收、原始碼取不到，只剩它的計數。跳過它
-                # ——同一份 index.html 的新副本仍在，行號對得回同一個檔案；漏掉的只有重載前那段
+                # ——同一份檔的新副本仍在，行號對得回同一個檔案；漏掉的只有重載前那段
                 # 執行（#33 起 pagehide 會送釋放請求，重載時舊文件多活一下，這種情況才出現）。
                 continue
             source = fetched["scriptSource"]
-            covered, code = line_coverage(source, entry["functions"])
-            # 報告上的行號指 index.html，不指行內 script 自己的第幾行：讀報告的人
+            covered, _ = line_coverage(source, entry["functions"])
+            # 報告上的行號指 repo 裡那個檔，不指 V8 那份 script 自己的第幾行：讀報告的人
             # 打開的是那個檔案，換算的那一步不該留給他做。
-            offset = _html_line_offset(source)
-            self.covered |= {number + offset for number in covered}
-            self.code |= {number + offset for number in code}
+            offset = _script_offset(name, self.scripts[name], source)
+            self.covered[name] |= {number + offset for number in covered}
+            self.loaded.add(name)
+        return evaluated
+
+    def report(self) -> dict:
+        files = []
+        for name, text in self.scripts.items():
+            code = _script_code_lines(name, text)
+            covered = self.covered[name] & code
+            files.append(
+                {
+                    "file": f"{_WEB_PREFIX}/{name}",
+                    "sha256": hashlib.sha256((_WEB_DIR / name).read_bytes()).hexdigest(),
+                    "loaded": name in self.loaded,
+                    "covered_lines": len(covered),
+                    "code_lines": len(code),
+                    "uncovered_lines": sorted(code - covered),
+                }
+            )
+        total = sum(entry["code_lines"] for entry in files)
+        covered = sum(entry["covered_lines"] for entry in files)
+        return {
+            "area": "web",
+            "files": files,
+            # 沒有任何頁面載入的模組：已經算進分母、覆蓋 0 行；這裡把名字列出來（#359 定案 3）。
+            "unloaded": [entry["file"] for entry in files if not entry["loaded"]],
+            "covered_lines": covered,
+            "code_lines": total,
+            "percent": round(100 * covered / total, 2) if total else 0.0,
+        }
 
     def write(self, path: pathlib.Path) -> None:
         # 一行都沒量到時仍然寫檔，而且寫 0：閘門讀不到檔會說「報告不見了」，讀到 0
         # 會說「這一層是 0%」。兩者都要擋，但它們是不同的失敗，訊息不該一樣。
-        total = len(self.code)
         path.write_text(
-            json.dumps(
-                {
-                    "area": "web",
-                    "file": "src/config_manager/web/index.html",
-                    "covered_lines": len(self.covered),
-                    "code_lines": total,
-                    "percent": round(100 * len(self.covered) / total, 2) if total else 0.0,
-                    "uncovered_lines": sorted(self.code - self.covered),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
+            json.dumps(self.report(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+
+
+_JS_TYPES = ("text/javascript", "application/javascript")
+
+
+class _PageLoad:
+    """一個頁面載入 web/ 底下的檔的結果，以及它的頁面錯誤（#359 定案 2）。
+
+    頁面請求的每一個模組都要拿到 200、Content-Type 是 JavaScript，而且真的執行了；入口
+    `js/main.js` 一定要被請求。只看 `requestfailed` 不夠：404 是有回應的請求，不會觸發它。
+    頁面錯誤（`pageerror`）一律記下；規格預期會出現的，要以 `open_page.expect_page_errors`
+    明確宣告，而且真的要出現——不整類忽略。
+    """
+
+    ENTRY = "js/main.js"
+
+    def __init__(self, page, page_url: str) -> None:
+        self.base = page_url.rsplit("/", 1)[0] + "/"
+        self.responses: dict[str, tuple[int, str]] = {}
+        self.failed: dict[str, str] = {}
+        self.errors: list[str] = []
+        self.expected_errors: list[str] = []
+        # V8 看到真的執行過的模組。頁面一載入完就先記一次（還在原網址、模組的頂層已經跑完），
+        # 收尾時再補；之後規格關頁或導頁，這份證據還在。
+        self.evaluated: set[str] = set()
+        page.on("response", self._response)
+        page.on("requestfailed", self._request_failed)
+        page.on("pageerror", lambda error: self.errors.append(str(error)))
+
+    def _web_name(self, url: str) -> str | None:
+        if not url.startswith(self.base):
+            return None
+        name = url[len(self.base) :].split("?", 1)[0].split("#", 1)[0]
+        return name if name.endswith(".js") else None
+
+    def _response(self, response) -> None:
+        name = self._web_name(response.url)
+        if name is not None:
+            content_type = response.headers.get("content-type", "")
+            self.responses.setdefault(name, (response.status, content_type))
+
+    def _request_failed(self, request) -> None:
+        name = self._web_name(request.url)
+        if name is not None:
+            self.failed.setdefault(name, request.failure or "（沒有說原因）")
+
+    def problems(self) -> list[str]:
+        """這一頁的載入問題：請求、執行與頁面錯誤。"""
+        return self._request_problems() + self._error_problems()
+
+    def _request_problems(self) -> list[str]:
+        found = []
+        if self.ENTRY not in self.responses and self.ENTRY not in self.failed:
+            found.append(f"入口 {self.ENTRY} 沒有被請求")
+        for name, reason in sorted(self.failed.items()):
+            found.append(f"{name} 的請求失敗：{reason}")
+        for name, (status, content_type) in sorted(self.responses.items()):
+            if status != http.HTTPStatus.OK:
+                found.append(f"{name} 回 {status}")
+            elif content_type.split(";", 1)[0].strip().lower() not in _JS_TYPES:
+                found.append(f"{name} 的 Content-Type 是「{content_type}」，不是 JavaScript")
+            elif name not in self.evaluated:
+                found.append(f"{name} 拿到了，但沒有執行")
+        return found
+
+    def _error_problems(self) -> list[str]:
+        def declared(error: str) -> bool:
+            return any(text in error for text in self.expected_errors)
+
+        def seen(text: str) -> bool:
+            return any(text in error for error in self.errors)
+
+        unexpected = [error for error in self.errors if not declared(error)]
+        missing = [text for text in self.expected_errors if not seen(text)]
+        return [f"沒有宣告的頁面錯誤：{error}" for error in unexpected] + [
+            f"宣告會出現的頁面錯誤沒有出現：{text}" for text in missing
+        ]
 
 
 @pytest.fixture(scope="session")
@@ -274,7 +477,7 @@ def browser():
             )
         except BrowserError as error:
             raise RuntimeError(
-                "起不了 Chromium，web/index.html 的覆蓋率量不到。"
+                "起不了 Chromium，web/ 的覆蓋率量不到。"
                 "下一步：改用 ./script/test.sh（docker/Dockerfile.test-tools 已經帶了它），"
                 "或在這台主機上跑 `playwright install chromium-headless-shell`"
             ) from error
@@ -282,11 +485,32 @@ def browser():
         launched.close()
 
 
-@pytest.fixture
-def open_page(browser, site, api, web_coverage):
-    """開一個頁面，離開時把它執行到的行併進 web 的覆蓋率。"""
+def _absorb_and_check(opened, web_coverage) -> list[str]:
+    """收每個頁面的覆蓋率，並回傳它們載入 web/ 的檔的問題（#359 定案 2）。
+
+    「有沒有執行」用的是開頁時就先記下的證據（見 `_pages` 的 `_open`），所以規格自己關頁
+    或導頁之後照樣核對。
+    """
+    problems = []
+    for page, cdp, url, loads in opened:
+        if not page.is_closed():
+            # 規格自己真的關掉的分頁（v0.6.0 檢查點 2 的「持有者關閉分頁」，#353）：CDP 跟著分頁
+            # 一起沒了，讀不到之後那段的覆蓋率；開頁時已經收過一次，之後跑過的行由同一則規格的
+            # 其他頁面與其餘規格補上。
+            loads.evaluated |= web_coverage.absorb(cdp, url)
+        problems += [f"{url}：{problem}" for problem in loads.problems()]
+    return problems
+
+
+@contextlib.contextmanager
+def _pages(browser, api, web_coverage, url: str):
+    """開頁面的那一套，open_page 與 open_prefixed_page 共用；`url` 是要打開的網址。
+
+    離開時把每個頁面執行到的行併進 web 的覆蓋率，並核對它們載入 web/ 的檔（#359）。
+    """
     opened = []
     contexts = []
+    loads_by_page = {}
 
     def _open(
         unreachable: str | None = None,
@@ -334,24 +558,57 @@ def open_page(browser, site, api, web_coverage):
         cdp.send("Profiler.enable")
         cdp.send("Profiler.startPreciseCoverage", {"callCount": True, "detailed": True})
 
-        url = f"{site}/index.html"
-        opened.append((page, cdp, url))
+        loads = loads_by_page[page] = _PageLoad(page, url)
+        opened.append((page, cdp, url, loads))
         page.goto(url)
+        # 載入完、還在原網址時就先收一次：模組的頂層這時已經跑完，V8 記得到它們有沒有執行。
+        # 收一次會把計數歸零，所以覆蓋率是這一次與收尾那一次的聯集，一行都不會少算。
+        loads.evaluated |= web_coverage.absorb(cdp, url)
         return page
 
+    def expect_page_errors(page, *texts: str) -> None:
+        """宣告這一頁預期會出現的頁面錯誤，每一則是錯誤訊息裡的一段字（#359 定案 2）。
+
+        沒宣告的頁面錯誤、宣告了卻沒出現的，收尾時都讓規格失敗。什麼時候宣告都可以，
+        比對在收尾時才做。
+        """
+        loads_by_page[page].expected_errors.extend(texts)
+
+    _open.expect_page_errors = expect_page_errors
     yield _open
 
-    for page, cdp, url in opened:
-        if page.is_closed():
-            # 規格自己真的關掉的分頁（v0.6.0 檢查點 2 的「持有者關閉分頁」，#353）：CDP 跟著分頁
-            # 一起沒了，讀不到它的覆蓋率；它跑過的行由同一則規格的其他頁面與其餘規格補上。
-            continue
-        web_coverage.absorb(cdp, url)
+    problems = _absorb_and_check(opened, web_coverage)
     for context in contexts:
         context.close()
+    # 頁面的載入檢查放在最後：覆蓋率照樣收齊、context 照樣關掉。
+    if problems:
+        pytest.fail("頁面載入 web/ 的檔有問題：\n" + "\n".join(problems), pytrace=False)
+
+
+@pytest.fixture
+def open_page(browser, site, api, web_coverage):
+    """開一個頁面（site 的 index.html）。離開時收覆蓋率、核對載入，見 `_pages`。"""
+    with _pages(browser, api, web_coverage, f"{site}/index.html") as opener:
+        yield opener
+
+
+@pytest.fixture
+def open_prefixed_page(browser, prefixed_site, api, web_coverage):
+    """同 open_page，但打開的是路徑前綴底下的那一份（`/config_manager/`，#359 定案 5）。"""
+    with _pages(browser, api, web_coverage, f"{prefixed_site}/") as opener:
+        yield opener
 
 
 # ── T11 規格 ────────────────────────────────────────────────────────────────
+
+
+def test_the_page_works_when_it_is_served_under_a_path_prefix(open_prefixed_page):
+    # #361 的單一入口會把頁面放在 `/config_manager/` 底下（#359 定案 5）。頁面對模組、模組之間的
+    # 路徑都是相對的，所以頁面照樣起得來；每個模組請求的狀態與執行，由收尾時的載入檢查核對。
+    page = open_prefixed_page()
+
+    page.wait_for_selector("[data-testid='identity-form']", state="visible")
+    assert page.is_visible("[data-testid='identity-form']")
 
 
 def test_the_identity_form_is_what_you_see_before_you_have_said_who_you_are(open_page):
@@ -934,12 +1191,23 @@ def test_ten_idle_minutes_on_the_real_backend_end_the_page_session(open_page, li
 # 自己產生的那一類——請求根本沒送到後端時，瀏覽器只給一句「Failed to fetch」。
 
 
+def _page_source() -> str:
+    """主頁面的全部原文：index.html 與 web/ 底下的每一個 .js、.css（#359 起程式與樣式各自是檔案）。
+
+    help.html 不算：它是說明頁，不是它所說明的那一頁。
+    """
+    paths = [_WEB_DIR / "index.html"] + sorted(
+        path for path in _WEB_DIR.rglob("*") if path.is_file() and path.suffix in (".js", ".css")
+    )
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+
 def _failure_helper_source() -> tuple[str, str]:
-    """index.html 切成（failureText 這個函式本身、其餘全部）。"""
-    html = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
-    start = html.index("function failureText(")
-    end = html.index("\n}\n", start) + len("\n}\n")
-    return html[start:end], html[:start] + html[end:]
+    """主頁面的原文切成（failureText 這個函式本身、其餘全部）。"""
+    source = _page_source()
+    start = source.index("function failureText(")
+    end = source.index("\n}\n", start) + len("\n}\n")
+    return source[start:end], source[:start] + source[end:]
 
 
 def test_every_failure_message_is_built_by_the_one_helper():
@@ -2643,17 +2911,6 @@ def _identity_error(page) -> str:
 
 # 「已經輸入過身分」的瀏覽器：交給 `open_page(identity=…)`，以該瀏覽器自己的 cookie 罐走端點記下。
 _REMEMBERED = {"name": _NAME, "email": _EMAIL}
-
-
-def _html_line_offset(script_source: str) -> int:
-    """行內 script 的第 1 行在 index.html 裡是第幾行，減一。
-
-    以 script 的內容在檔案裡定位，不以 `<script>` 的行號——後者要再假設「內容從
-    標籤的下一行開始」，而那個假設在 script 標籤與內容同一行時就錯了。
-    """
-    html = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
-    start = html.index(script_source)
-    return html.count("\n", 0, start)
 
 
 def _free_port() -> int:
@@ -7332,10 +7589,10 @@ def test_the_help_page_links_point_nowhere_outside_this_service(open_page, site)
 
 
 def test_every_button_the_help_page_names_exists_on_the_page_it_describes(open_page, site):
-    # 說明頁把介面上的字（按鈕、狀態）標成 `.ui`。它們要真的出現在 index.html 裡——介面改了字而說明
-    # 沒跟上，讀的人會去找一顆不存在的按鈕。
+    # 說明頁把介面上的字（按鈕、狀態）標成 `.ui`。它們要真的出現在主頁面裡（index.html 與它的模組）
+    # ——介面改了字而說明沒跟上，讀的人會去找一顆不存在的按鈕。
     help_page = _help_page(open_page, site)
-    source = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
+    source = _page_source()
 
     named = sorted({node.inner_text() for node in help_page.query_selector_all(".ui")})
     assert named and [label for label in named if label not in source] == []

@@ -193,6 +193,16 @@ run_gate() {
   grep -qxF "| core | 84.99% | 8499/10000 | 85% | 未達 |" "${WORK}/summary/coverage.md"
 }
 
+@test "web 有模組沒被任何頁面載入時，指名那些模組（#359）" {
+  # 它們已經算進分母、覆蓋 0 行（報告裡的數字已經反映）；gate 要把名字說出來，不能只剩一個變低的百分比。
+  write_python_report 90 100 90 100 90 100
+  cat >"${WORK}/web.json" <<JSON
+{"covered_lines": 90, "code_lines": 100, "unloaded": ["src/config_manager/web/js/a.js", "src/config_manager/web/js/b.js"]}
+JSON
+  run_gate
+  [[ "${output}" == *"沒有被任何頁面載入，已算進分母、覆蓋 0 行：src/config_manager/web/js/a.js、src/config_manager/web/js/b.js"* ]]
+}
+
 @test "--summary 時，沒量到的那一層寫 unmeasured，不寫成 0%" {
   # 報告不存在與覆蓋率是 0 是兩種失敗（見上面那兩則）；寫進 summary 之後也不能混成一種。
   write_python_report 90 100 90 100 90 100

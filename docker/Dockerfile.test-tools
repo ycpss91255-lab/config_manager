@@ -90,7 +90,7 @@ COPY config/pip/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt \
     && rm -f /tmp/requirements-dev.txt /tmp/requirements.txt
 
-# 瀏覽器。`web/index.html` 的行內 JS 由 pytest 量不到，所以 T11 的規格用一個真的
+# 瀏覽器。`web/` 的 JS（#359 起是 `web/js/` 底下的原生 ES 模組）由 pytest 量不到，所以 T11 的規格用一個真的
 # Chromium 打開真的頁面，覆蓋率由 V8 自己算（#97）。
 #
 # 裝在這裡而不是應用映像的一個 `FROM runtime` 階段——那是原本傾向的做法——理由是

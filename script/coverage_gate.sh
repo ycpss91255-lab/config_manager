@@ -150,6 +150,13 @@ def web_area():
     return report["covered_lines"], report["code_lines"]
 
 
+def web_unloaded():
+    """沒有被任何頁面載入的 web 模組（#359）。它們已經算進分母、覆蓋 0 行；這裡只負責說出名字。"""
+    if not web_report.exists():
+        return []
+    return json.loads(web_report.read_text(encoding="utf-8")).get("unloaded", [])
+
+
 rows, below, unmeasured = [], [], []
 # summary 用的同一份判定：每層 (層名, 執行過的行, 總行數, 下限, 判定)。表格與 tsv 都從這裡寫，
 # 不另外算一次——另算一次的數字遲早會與結束碼說的不是同一件事。
@@ -182,6 +189,9 @@ width = max(len(row[1]) for row in rows)
 print("coverage_gate: 四個資料夾各自計算、各自擋")
 for name, value, floor, verdict in rows:
     print(f"  {name:<5} {value:<{width}}  下限 {floor:g}%  {verdict}")
+unloaded = web_unloaded()
+if unloaded:
+    print(f"coverage_gate: web 有模組沒有被任何頁面載入，已算進分母、覆蓋 0 行：{'、'.join(unloaded)}")
 
 for name, reason in unmeasured:
     print(

@@ -209,6 +209,39 @@ answers_locally() {
   ok "本機連得到後端（部署模式）與前端"
 }
 
+# frontend 容器直接供應 web/ 底下的每一個模組與樣式（#359）：狀態碼要是 200，Content-Type 要是
+# JavaScript（.js）或 text/css（.css）。清單由 repo 的原始碼決定，不由頁面決定。映像裡少了一個檔、
+# 或 http.server 對某個副檔名給了別的類型，瀏覽器都會拒絕載入；規格裡的靜態站不是這個容器，
+# 所以容器本身只在這裡被量到。
+serves_the_modules() {
+  local -a files=()
+  mapfile -t files < <(cd "${REPO_ROOT}/src/config_manager/web" \
+    && find . -type f \( -name '*.js' -o -name '*.css' \) | sed 's|^\./||' | LC_ALL=C sort)
+  ((${#files[@]} > 0)) \
+    || fail "src/config_manager/web/ 底下找不到任何 .js 或 .css" "檢查這個簽出的 web/ 目錄還在不在"
+  local file got status type
+  for file in "${files[@]}"; do
+    got="$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code} %{content_type}' \
+      "${WEB}/${file}")" || true
+    status="${got%% *}"
+    type="${got#* }"
+    type="${type%%;*}"
+    [[ "${status}" == "200" ]] \
+      || fail "frontend 容器供應 ${file} 回 ${status:-（沒有回應）}" "檢查映像裡有沒有這個檔（Dockerfile 複製 src/ 的那一步）"
+    case "${file}" in
+      *.js)
+        [[ "${type}" == "text/javascript" || "${type}" == "application/javascript" ]] \
+          || fail "frontend 容器供應 ${file} 的 Content-Type 是「${type}」，瀏覽器不會把它當模組執行" "檢查 runtime 映像的 Python 怎麼對 .js 決定類型（mimetypes 會讀系統的 mime.types）"
+        ;;
+      *.css)
+        [[ "${type}" == "text/css" ]] \
+          || fail "frontend 容器供應 ${file} 的 Content-Type 是「${type}」，瀏覽器不會套用這份樣式" "檢查 runtime 映像的 Python 怎麼對 .css 決定類型"
+        ;;
+    esac
+  done
+  ok "frontend 容器供應 web/ 底下每一個模組與樣式，狀態碼都是 200、Content-Type 都對"
+}
+
 runs_as_pid_one() {
   local name expected command
   for name in "${BACKEND}:config_manager.api.cli" "${FRONTEND}:http.server"; do
@@ -361,6 +394,7 @@ exercise() {
   launch
   owned_by_this_run
   answers_locally
+  serves_the_modules
   host_name_candidate
   only_local
   runs_as_pid_one

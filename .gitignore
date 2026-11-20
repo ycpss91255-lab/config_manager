@@ -10,7 +10,7 @@ __pycache__/
 coverage/
 htmlcov/
 .coverage
-# web/index.html 的覆蓋率報告，由 T11 的規格寫出、由 script/coverage_gate.sh 讀。
+# web/ 的覆蓋率報告（逐檔），由 T11 的規格寫出、由 script/coverage_gate.sh 讀。
 .coverage-web.json
 # script/test.sh --part 的各段結果，由 --part gate 讀；CI 上由各 job 上傳、再下載給 gate。
 ci-parts/
