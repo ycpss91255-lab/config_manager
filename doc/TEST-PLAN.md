@@ -2103,10 +2103,10 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 | `script/lint_run_name.sh` | T19（workflow 的 run-name 分得出對應的 commit，#350） | 已落地（CI 的 `run-name` job 與本機 pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_single_task.sh` | T19（標題任務編號限制，#351） | 已落地（CI 的 `single-task` job 與本機 commit-msg／pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_agents_link.sh` | T19（規範正本 `AGENTS.md` 與指向它的 `CLAUDE.md` symlink，git 樹與工作樹分開檢查，#404） | 已落地 |
-| `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 未落地（#405） |
-| `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 未落地（#405） |
+| `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/githook-checks/commit-msg/10-single-task.sh` | T19（把訊息檔交給 `lint_single_task.sh commit-msg`，#351） | 已落地 |
-| `script/githook-checks/commit-msg/20-no-attribution.sh` | T19（把訊息檔交給 `lint_attribution.sh commit-msg`，#405） | 未落地（#405） |
+| `script/githook-checks/commit-msg/20-no-attribution.sh` | T19（把訊息檔交給 `lint_attribution.sh commit-msg`，#405） | 已落地 |
 | `script/githook-checks/pre-push/20-single-task.sh` | T19（把 pre-push 的標準輸入交給 `lint_single_task.sh pre-push`，#351） | 已落地 |
 | `script/githook-checks/pre-push/10-run-name.sh` | T19（把 pre-push 的標準輸入交給 `lint_run_name.sh --pre-push`，#350） | 已落地 |
 | `script/githook.sh` | T19（本機 git hook 的共用入口，檢查轉進檢查映像，#391） | 已落地 |
