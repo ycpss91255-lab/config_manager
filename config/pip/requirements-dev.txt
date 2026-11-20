@@ -28,7 +28,7 @@ ruff==0.17.0
 mypy==2.4.0
 pylint==4.1.3
 
-# web/index.html 的行內 JS：pytest 量不到它，瀏覽器自己會算（T11、#97）。
+# web/ 的 JS（#359 起是 web/js/ 底下的 ES 模組）：pytest 量不到它，瀏覽器自己會算（T11、#97）。
 # 1.49 起才有 chromium-headless-shell 這個 channel，而那是這裡要的那一份
 # ——完整的 chromium 帶著一整套桌面相依，量同一個數字卻讓映像多 1 GB。
 #
