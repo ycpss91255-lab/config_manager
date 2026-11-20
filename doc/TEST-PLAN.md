@@ -1392,6 +1392,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `.githooks/`、`script/githook.sh`、`script/test.sh --hook`（#391：git hook 的進入點與轉進容器） | `test/bats/unit/githook.bats` |
 | `script/hooks/pre/run.sh`（#385） | `test/bats/unit/hooks_pre_run.bats` |
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
+| `script/lint_agents_link.sh`（#404） | `test/bats/unit/lint_agents_link.bats` |
 
 **`script/lint_messages.sh` 的管轄範圍從 Python 擴到 shell**（#133）。先前它的預設
 標的只有 `src/config_manager`，單檔模式還明寫「不是 `.py` 就什麼都不檢查」，所以
@@ -1845,6 +1846,28 @@ squash——每個 PR 都必然經歷至少一次 SHA 改寫。第一版綁在 S
 | **（#388）pre-run：兩者都沒設** | 檢查 compose 檔的預設目錄，來源寫 compose 檔的預設值 |
 | **（#388）pre-run：`.env` 的 `CM_TARGET_ROOT` 值裡含指令替換** | 內容不被執行（它會建出的標記檔沒有出現） |
 | **（#388）pre-run：`docker compose config` 解不出設定（例如 compose 檔有錯）** | 非零結束並轉述 compose 的原因；不自己猜一個目錄繼續 |
+
+**`script/lint_agents_link.sh` 被觀察的是「規範正本 `AGENTS.md` 與指向它的 `CLAUDE.md`，在 git 樹與工作樹裡是不是該有的形狀」**（#404）。
+規範正本是一般檔 `AGENTS.md`；`CLAUDE.md` 是指向它的相對 symlink，git 記成 mode 120000、內容剛好是 `AGENTS.md`。兩項檢查分開判定、
+分開回報：**git 樹**看這一輪受驗的 commit（`git ls-tree HEAD`），**工作樹**看實際簽出的檔案（`CLAUDE.md` 是指向 `AGENTS.md` 的
+symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格在暫存目錄建一份真的 git repo，造出各種形狀再執行，看結束碼與
+訊息指名的是哪一項。由 `./script/test.sh --lint` 執行（CI 的 `lint` job）。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `AGENTS.md` 是一般檔、`CLAUDE.md` 是指向它的 symlink，已 commit | 以 0 結束；git 樹與工作樹兩項都回報通過 |
+| 這個 repo 自己的簽出 | 以 0 結束 |
+| `CLAUDE.md` 是一般檔（已 commit） | 非零結束；git 樹與工作樹兩項都回報失敗 |
+| `CLAUDE.md` 是 symlink，但指向別的檔（已 commit） | 非零結束；兩項都回報失敗 |
+| `AGENTS.md` 不存在（`CLAUDE.md` 指向的目標不在） | 非零結束；兩項都回報失敗 |
+| `AGENTS.md` 本身是 symlink | 非零結束；兩項都回報失敗 |
+| `AGENTS.md` 是目錄 | 非零結束；兩項都回報失敗 |
+| git 樹正常，工作樹的 `CLAUDE.md` 被換成一般檔（還沒 commit） | 非零結束；git 樹回報通過、工作樹回報失敗 |
+| 工作樹正常，git 樹的 `CLAUDE.md` 是一般檔（錯的形狀已 commit，工作樹改回 symlink 還沒 commit） | 非零結束；git 樹回報失敗、工作樹回報通過 |
+| 不在 git repo 裡 | 非零結束，說明 git 樹無從檢查 |
+
+**它擋不住的**：`AGENTS.md` 的內容對不對——它只看連結的形狀。在主機上把 symlink 換成一般檔、還沒 commit 時，要在本機跑
+`./script/test.sh --lint` 才抓得到；沒跑就要等 commit 之後的 CI。
 
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
