@@ -435,7 +435,7 @@ class _PageLoad:
         for name, reason in sorted(self.failed.items()):
             found.append(f"{name} 的請求失敗：{reason}")
         for name, (status, content_type) in sorted(self.responses.items()):
-            if status != 200:
+            if status != http.HTTPStatus.OK:
                 found.append(f"{name} 回 {status}")
             elif content_type.split(";", 1)[0].strip().lower() not in _JS_TYPES:
                 found.append(f"{name} 的 Content-Type 是「{content_type}」，不是 JavaScript")
