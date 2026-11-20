@@ -11,7 +11,7 @@ skill 在探索這個 codebase 之前該讀什麼、以及讀了要遵守什麼�
 （`doc/PRD.md`、`doc/TEST-PLAN.md`、`doc/adr/`、`doc/test/`）。skill 的預設慣例寫的是
 `docs/`，在這裡是錯的路徑——照那個去找會找不到，而且找不到時它會安靜地當作沒有 ADR。
 
-這個 repo 的完整閱讀順序（見 `CLAUDE.md`）：
+這個 repo 的完整閱讀順序（見 `AGENTS.md`）：
 
 ```
 CONTEXT.md  →  doc/PRD.md（9 條不變式，不得違反）
