@@ -92,7 +92,8 @@ PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從�
 
 ## 品質閘門（本機與 CI 同一組）
 
-**所有檢查一律在容器內執行，絕不對這台主機跑。**
+**所有檢查一律在容器內執行，絕不對這台主機跑。** 唯一的例外是本機 git hook 登記的檢查：它們在主機上直接跑、不經 docker
+（維護者 11/20 定案，#406；ADR-00000027 的 Amendment）。那是提早攔的一層，不是證據——`just test` 與 CI 仍在容器裡跑，CI 是最後一道。
 
 `./script/test.sh`（或 `just test`）會建置 `docker/Dockerfile.test-tools` 並把自己轉進容器重跑；CI 呼叫同一支腳本，不安裝任何工具。一份映像，兩個呼叫者（ADR-00000027）。綠了才推。
 
@@ -109,7 +110,8 @@ PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從�
 
 - `ruff check src test`／`mypy --strict src/config_manager`／`pylint src`（10.00/10）／`pytest test/pytest --cov=src/config_manager`（`core`／`io`／`api`／`web` 各自下限 85，分開擋）
 - shell 腳本需要 **bash 4+**（macOS 用 `brew install bash`，內建的 3.2 跑不動）
-- 本機 git hook：`just setup hooks` 打開、`just setup hooks-off` 關掉；檢查同樣在容器裡跑，見 `doc/GIT-HOOKS.md`（#391）
+- 本機 git hook：`just setup hooks` 打開、`just setup hooks-off` 關掉；登記的檢查在這台主機上直接跑、不經 docker（上面那條的例外），
+  主機要有 bash 4 以上、python3、git，缺了 commit 與 push 會被擋下。本機通過不算證據，CI 是最後一道。見 `doc/GIT-HOOKS.md`（#391、#406）
 
 ## TDD
 

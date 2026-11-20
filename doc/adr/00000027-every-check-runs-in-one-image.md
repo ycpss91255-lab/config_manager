@@ -55,3 +55,19 @@
   選用的鏡像同時提供 `/debian` 與 `/debian-security`——較近的兩個只有前者，
   而只改主檔案庫會讓 security 那行仍指向連不上的主機，`apt update` 照樣失敗。
 - 新增檢查工具時只改 Dockerfile 與 `test.sh` 的 `run_lint`，CI 不需同步。
+
+---
+
+**Amendment (#406, 2026-11-21):** 決策未變，「唯一的檢查環境」的適用範圍改了：**它不再涵蓋本機 git hook。**
+維護者 11/20 定案（#406 的 Q2、Q5）：git hook 登記的檢查（`script/githook-checks/<進入點>/`）由 `script/githook.sh`
+在主機上直接跑，不經 docker。這是給 git hook 的例外，不是給檢查的例外：
+
+- `script/test.sh`（`just test`）與 CI 仍在 `docker/Dockerfile.test-tools` 這同一份映像裡跑。「一份映像，兩個呼叫者」不變，
+  git hook 不是第三個呼叫者。
+- git hook 是 commit、push 之前提早攔的一層，不是證據。主機工具和映像不同造成的差異——本 ADR 的 Context 那四次——在那裡
+  仍然可能發生，所以**CI 是最後一道**：hook 登記的每一支檢查，CI 都在映像裡跑同一支。
+- 主機缺 bash 4 以上（`PATH` 上先找到的那一支）、python3 或 git 時，hook 擋下並寫出下一步，不放行。這延續上面
+  「工具缺席改為中止而非通過」的同一條線：缺工具不得靜默通過。
+
+#391 原本把 hook 的檢查也轉進這份映像。那個做法讓打開 hook 的 checkout 每次 commit、push 都要用 docker，與「docker 先問」
+衝突，所以 #406 拿掉了那個入口。
