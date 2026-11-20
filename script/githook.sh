@@ -9,12 +9,18 @@
 # 是最後一道。
 #
 # 判斷的先後：
-#   1. 先數登記的檢查（`script/githook-checks/<進入點>/` 底下的可執行檔）。一支都沒有就放行並說明。
-#   2. 依檔名順序執行每一支。commit-msg：每支都收到 git 給的訊息檔路徑；git 不給標準輸入，這裡也不讀，
+#   1. 先數登記的檢查（`script/githook-checks/<進入點>/` 底下的可執行檔）。一支都沒有就放行並說明，
+#      不看主機工具——沒有要執行的東西，也就不需要工具。
+#   2. 有登記的檢查，先確認主機有：PATH 上先找到的 bash 是 4 以上（登記的檢查以 `#!/usr/bin/env bash`
+#      啟動，用的就是那一支，不一定是執行這支的那一支）、python3、git。缺任何一項就非零結束並寫出
+#      下一步，不放行（#406 的 Q8：不默默放寬保護）。
+#   3. 依檔名順序執行每一支。commit-msg：每支都收到 git 給的訊息檔路徑；git 不給標準輸入，這裡也不讀，
 #      每支收到空的標準輸入（直接在終端機執行時才不會停下來等輸入）。pre-push：每支都收到兩個參數，
 #      標準輸入先存成暫存檔，每支都收到完整的一份。
-#   3. 任何一支失敗就非零結束，逐支指名失敗的那幾支；原因由各支自己印。
+#   4. 任何一支失敗就非零結束，逐支指名失敗的那幾支；原因由各支自己印。
 #
+# 圖形介面的 git 用戶端可能帶著不同的 PATH，先找到 macOS 內建的 bash 3.2：第 2 步擋下並說明。所以這支
+# 在走到第 2 步的說明之前，只用 bash 3.2 也有的寫法（沒有 mapfile、關聯陣列，不展開空陣列）。
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -34,7 +40,36 @@ usage() {
 
 由 .githooks/ 的進入點呼叫（just setup hooks 之後，git 會在 commit 與 push 時觸發）。
 登記的檢查放在 script/githook-checks/<進入點>/，在這台主機上依檔名順序直接執行，不經 docker。
+有登記的檢查時，主機要有 bash 4 以上（PATH 上先找到的那一支）、python3 與 git。
 USAGE
+}
+
+# 有登記的檢查時才問：主機缺什麼。每缺一項印一行（都帶下一步），缺任何一項就回 1。
+host_missing() {
+  local entry="$1" missing=0 bash_path major=""
+  if bash_path="$(command -v bash)"; then
+    major="$(bash -c 'printf "%s" "${BASH_VERSINFO[0]}"' 2>/dev/null)" || major=""
+    if ! [[ "${major}" =~ ^[0-9]+$ ]] || ((major < 4)); then
+      printf 'githook: %s 有登記的檢查，但 PATH 上先找到的 bash（%s）主版本是 %s，登記的檢查要 bash 4 以上，git 不會繼續。下一步：macOS 用 brew install bash，並讓 Homebrew 的 bin（例如 /opt/homebrew/bin）在 PATH 上排在 /bin 前面\n' \
+        "${entry}" "${bash_path}" "${major:-（讀不出來）}" >&2
+      missing=1
+    fi
+  else
+    printf 'githook: %s 有登記的檢查，但 PATH 上找不到 bash，登記的檢查要 bash 4 以上，git 不會繼續。下一步：macOS 用 brew install bash，並讓 Homebrew 的 bin 在 PATH 上找得到\n' \
+      "${entry}" >&2
+    missing=1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'githook: %s 有登記的檢查，但 PATH 上找不到 python3，登記的檢查要用它，git 不會繼續。下一步：裝 Python 3（macOS 用 brew install python），讓 python3 在 PATH 上找得到\n' \
+      "${entry}" >&2
+    missing=1
+  fi
+  if ! command -v git >/dev/null 2>&1; then
+    printf 'githook: %s 有登記的檢查，但 PATH 上找不到 git，登記的檢查要用它，git 不會繼續。下一步：macOS 用 xcode-select --install 或 brew install git，讓 git 在 PATH 上找得到\n' \
+      "${entry}" >&2
+    missing=1
+  fi
+  return "${missing}"
 }
 
 main() {
@@ -62,6 +97,8 @@ main() {
     printf 'githook: %s 目前沒有登記任何檢查，放行（登記的位置：script/githook-checks/%s/）\n' "${entry}" "${entry}"
     return 0
   fi
+
+  host_missing "${entry}" || return 1
 
   local input=/dev/null
   if [[ "${entry}" == pre-push ]]; then
