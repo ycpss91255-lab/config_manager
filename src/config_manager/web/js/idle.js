@@ -5,7 +5,7 @@
 import { API_BASE, apiFetch } from "./api.js";
 import { draftUids } from "./drafts.js";
 import {
-  refreshWorkspaceEmpty, setWorkspaceEpoch, workspaceEmpty, workspaceEpoch,
+  refreshWorkspaceEmpty, setWorkspaceEpoch, workspace, workspaceEmpty, workspaceEpoch,
 } from "./workspace.js";
 import { cancelOpenConfirm } from "./dialogs.js";
 import {

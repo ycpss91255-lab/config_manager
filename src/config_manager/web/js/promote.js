@@ -5,8 +5,8 @@
 import { API_BASE, editFetch, failureText, readJson } from "./api.js";
 import { element } from "./dom.js";
 import {
-  applyDraftsView, draftParticipants, draftUids, loadDrafts, ownerLabel, setDraftDetails,
-  setDrafts,
+  applyDraftsView, draftDetails, draftParticipants, draftUids, loadDrafts, ownerLabel,
+  setDraftDetails, setDrafts,
 } from "./drafts.js";
 import { load, loadError, rows } from "./tree.js";
 import { closeSlot, openPanel, openUids } from "./workspace.js";
