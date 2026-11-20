@@ -850,6 +850,7 @@ entrypoint——三者都不經過 compose。映像用哪個階段、哪個模�
 | 驗證的行為（服務實測：`script/compose_smoke.sh`，CI 的 Linux runner） |
 |---|
 | `host` 與 `bridge` 各實際起一次：`127.0.0.1` 上後端答得出 `/api/mode`（部署模式）、前端供得出頁面 |
+| **（#359）frontend 容器供應 `web/` 底下每一個 `.js` 與 `.css`**：清單由 repo 的原始碼決定，每一個都回 200，Content-Type 是 JavaScript（`.js`）或 `text/css`（`.css`）（host 與 bridge 各一次） |
 | 從主機的**非 loopback 位址**連不到兩個服務——且在同一次執行裡先證明「同一個位址上一個故意綁 `0.0.0.0` 的對照服務連得到」，否則「連不到」可能只是網路本來就不通 |
 | 容器的 PID 1 是服務本身（entrypoint 以 `exec "$@"` 交棒）；`docker compose stop` 在寬限時間內結束，不是被強制終止 |
 | 容器的重啟策略是 `unless-stopped` |
