@@ -123,7 +123,7 @@ check_worktree() {
       failed=1
     fi
   elif [[ -e CLAUDE.md ]]; then
-    printf 'lint_agents_link: 工作樹：失敗——CLAUDE.md 是%s，不是指向 AGENTS.md 的 symlink（還沒 commit 的話，可能是被 sed -i 這類先寫新檔再換名的工具換掉了）\n' \
+    printf 'lint_agents_link: 工作樹：失敗——CLAUDE.md 是%s，不是指向 AGENTS.md 的 symlink（還沒 commit 的話，可能是被先寫新檔再換名的工具換掉了，例如 GNU sed 的就地編輯）\n' \
       "$(work_kind CLAUDE.md)" >&2
     printf 'lint_agents_link: 下一步：先把 CLAUDE.md 裡的改動搬進 AGENTS.md，再 rm CLAUDE.md && ln -s AGENTS.md CLAUDE.md；沒有要留的改動，就 git checkout -- CLAUDE.md 還原\n' >&2
     failed=1
