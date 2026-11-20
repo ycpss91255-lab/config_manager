@@ -403,6 +403,9 @@ class _PageLoad:
         self.failed: dict[str, str] = {}
         self.errors: list[str] = []
         self.expected_errors: list[str] = []
+        # V8 看到真的執行過的模組。頁面一載入完就先記一次（還在原網址、模組的頂層已經跑完），
+        # 收尾時再補；之後規格關頁或導頁，這份證據還在。
+        self.evaluated: set[str] = set()
         page.on("response", self._response)
         page.on("requestfailed", self._request_failed)
         page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -424,11 +427,11 @@ class _PageLoad:
         if name is not None:
             self.failed.setdefault(name, request.failure or "（沒有說原因）")
 
-    def problems(self, evaluated: set[str] | None) -> list[str]:
-        """這一頁的載入問題。`evaluated` 是 V8 看到真的執行過的模組；不核對執行時是 None。"""
-        return self._request_problems(evaluated) + self._error_problems()
+    def problems(self) -> list[str]:
+        """這一頁的載入問題：請求、執行與頁面錯誤。"""
+        return self._request_problems() + self._error_problems()
 
-    def _request_problems(self, evaluated: set[str] | None) -> list[str]:
+    def _request_problems(self) -> list[str]:
         found = []
         if self.ENTRY not in self.responses and self.ENTRY not in self.failed:
             found.append(f"入口 {self.ENTRY} 沒有被請求")
@@ -439,7 +442,7 @@ class _PageLoad:
                 found.append(f"{name} 回 {status}")
             elif content_type.split(";", 1)[0].strip().lower() not in _JS_TYPES:
                 found.append(f"{name} 的 Content-Type 是「{content_type}」，不是 JavaScript")
-            elif evaluated is not None and name not in evaluated:
+            elif name not in self.evaluated:
                 found.append(f"{name} 拿到了，但沒有執行")
         return found
 
@@ -483,20 +486,19 @@ def browser():
 
 
 def _absorb_and_check(opened, web_coverage) -> list[str]:
-    """收每個頁面的覆蓋率，並回傳它們載入 web/ 的檔的問題（#359 定案 2）。"""
+    """收每個頁面的覆蓋率，並回傳它們載入 web/ 的檔的問題（#359 定案 2）。
+
+    「有沒有執行」用的是開頁時就先記下的證據（見 `_pages` 的 `_open`），所以規格自己關頁
+    或導頁之後照樣核對。
+    """
     problems = []
     for page, cdp, url, loads in opened:
-        if page.is_closed():
+        if not page.is_closed():
             # 規格自己真的關掉的分頁（v0.6.0 檢查點 2 的「持有者關閉分頁」，#353）：CDP 跟著分頁
-            # 一起沒了，讀不到它的覆蓋率；它跑過的行由同一則規格的其他頁面與其餘規格補上。
-            problems += [f"{url}：{problem}" for problem in loads.problems(None)]
-            continue
-        evaluated = web_coverage.absorb(cdp, url)
-        # 規格自己把頁面導到別處（例如 help.html）之後，原本那一頁的模組可能已被回收、
-        # V8 不再列它們；那時只核對請求，不核對「有沒有執行」。
-        if page.url.split("#", 1)[0] != url:
-            evaluated = None
-        problems += [f"{url}：{problem}" for problem in loads.problems(evaluated)]
+            # 一起沒了，讀不到之後那段的覆蓋率；開頁時已經收過一次，之後跑過的行由同一則規格的
+            # 其他頁面與其餘規格補上。
+            loads.evaluated |= web_coverage.absorb(cdp, url)
+        problems += [f"{url}：{problem}" for problem in loads.problems()]
     return problems
 
 
@@ -559,6 +561,9 @@ def _pages(browser, api, web_coverage, url: str):
         loads = loads_by_page[page] = _PageLoad(page, url)
         opened.append((page, cdp, url, loads))
         page.goto(url)
+        # 載入完、還在原網址時就先收一次：模組的頂層這時已經跑完，V8 記得到它們有沒有執行。
+        # 收一次會把計數歸零，所以覆蓋率是這一次與收尾那一次的聯集，一行都不會少算。
+        loads.evaluated |= web_coverage.absorb(cdp, url)
         return page
 
     def expect_page_errors(page, *texts: str) -> None:
