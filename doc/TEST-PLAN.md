@@ -1389,7 +1389,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/release.sh` | `test/bats/unit/release.bats` |
 | `justfile`（任務進入點的接線） | `test/bats/unit/justfile.bats` |
 | `script/setup_hooks.sh`（#391：`just setup hooks`／`hooks-off`） | `test/bats/unit/setup_hooks.bats` |
-| `.githooks/`、`script/githook.sh`、`script/test.sh --hook`（#391：git hook 的進入點與轉進容器） | `test/bats/unit/githook.bats` |
+| `.githooks/`、`script/githook.sh`（#391、#406：git hook 的進入點，在主機上直接執行登記的檢查） | `test/bats/unit/githook.bats` |
 | `script/hooks/pre/run.sh`（#385） | `test/bats/unit/hooks_pre_run.bats` |
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
 | `script/lint_agents_link.sh`（#404） | `test/bats/unit/lint_agents_link.bats` |
@@ -1465,6 +1465,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | 兩者皆無 | 轉進容器；docker 缺席時訊息指出逃生口 |
 | 在 git worktree 裡轉進容器 | 主 repo 的 git 目錄以**同一個絕對路徑**掛進容器 |
 | 在一般簽出裡轉進容器 | **不重複掛載** git 目錄，`--volume` 只有 repo 本身那一個 |
+| `--hook`（#406 拿掉了 git hook 的入口） | 以 2 結束並指名它是不認得的參數；腳本裡沒有 `run_hook` 與 `--hook` |
 | 一條規格自己跳過 | 結束前被**逐條指名**，不混在一片 ok 裡 |
 | 一個層級一條規格都沒有 | 被指名；`--level` 不以 pytest 的 5 結束（那是假紅燈） |
 | `CM_TEST_IMAGE_CACHE` 不設 | 照舊以 `docker build` 建映像，不碰快取（#358） |
@@ -1640,6 +1641,7 @@ PR 標題。
 | 行為 | 通過條件 |
 |---|---|
 | `on`，本地沒有設、也沒有繼承來的值 | 本地設成 `.githooks`；訊息寫明這份設定由所有 worktree 共用、簽出裡沒有 `.githooks/` 時不會執行 hook；全域與系統設定檔不變 |
+| `on`，設定成功 | 訊息說明 hook 登記的檢查在這台主機上直接跑，不提檢查映像（#406） |
 | `on`，再跑一次 | 設定不變，以 0 結束並說明已經啟用 |
 | `on`，在一個 worktree 裡執行 | 設在共用的本地設定：主簽出也讀得到同一個值 |
 | `on`，本地已經是別的值 | 不覆蓋；非零結束，訊息指名那個值與怎麼處理 |
@@ -1649,28 +1651,44 @@ PR 標題。
 | `off`，本地是別的值 | 不動，說明那不是這支設的 |
 | `off`，本地沒有設、全域是 `.githooks` | 不動全域，說明全域的值要在全域那裡處理 |
 
-**`.githooks/`、`script/githook.sh` 與 `script/test.sh --hook` 被觀察的是「git 給 hook 的東西有沒有完整到達容器裡的檢查」**
-（#391）。git 在主機上觸發 hook；登記的檢查（`script/githook-checks/<進入點>/` 底下的可執行檔）在檢查映像裡跑。
-規格以**真的 git** 觸發（真的 `git commit`、對一個本機 bare repo 的真的 `git push`），一般簽出與 worktree 各一次；
-`PATH` 上的 `docker` 是一個**轉接**：記下參數，把映像後面那段指令在同一份簽出裡以 `CM_IN_TEST_IMAGE=1` 執行，
-而且**只有參數帶 `-i` 時才把標準輸入接過去**——少了 `-i`，真的 `docker run` 也收不到標準輸入。登記一支測試用的
-檢查，把它收到的參數、標準輸入與訊息檔內容寫下來，與 git 給的比對。被觀察的行為：
+**`.githooks/` 與 `script/githook.sh` 被觀察的是「git 給 hook 的東西有沒有完整交到每一支登記的檢查，以及主機缺工具時有沒有擋下」**
+（#391、#406）。git 在主機上觸發 hook，登記的檢查（`script/githook-checks/<進入點>/` 底下的可執行檔）也在這台主機上
+直接跑，不經 docker（維護者 11/20 定案，#406；ADR-00000027 的 Amendment）。規格以**真的 git** 觸發（真的 `git commit`、
+對一個本機 bare repo 的真的 `git push`），一般簽出與 worktree 各一次；登記測試用的檢查，把它收到的參數、標準輸入與
+訊息檔內容寫下來，與 git 給的比對。
+
+主機缺什麼，以**重建 `PATH`** 造出來：一個目錄放現在 `PATH` 上每一個指令的連結（同名的以 `PATH` 上先找到的為準），
+只拿掉要缺的那一個——與 `script/test.sh` 的規格同一個理由，`command -v` 是 shell 內建，覆寫不掉。bash 低於 4 以
+`PATH` 最前面一支只會回報主版本 3 的假 `bash` 造出來：登記的檢查以 `#!/usr/bin/env bash` 啟動，用的是 `PATH` 上
+先找到的那一支，所以 `githook.sh` 問的也是那一支，不是執行它自己的那一支。被觀察的行為：
 
 | 行為 | 通過條件 |
 |---|---|
-| 沒有登記任何檢查 | 以 0 結束並說明目前沒有登記檢查；`docker` 沒有被呼叫 |
+| 沒有登記任何檢查 | 以 0 結束並說明目前沒有登記檢查；主機找不到 `python3` 時也一樣以 0 結束（沒有要執行的東西，不看主機工具） |
+| `PATH` 上沒有 `docker`，直接執行 `githook.sh commit-msg <檔>` | 登記的檢查照樣執行，收到那個訊息檔 |
 | 一般簽出裡 `git commit`（`commit-msg`） | 登記的檢查收到 git 給的訊息檔路徑，讀得到這次的 commit 訊息 |
 | worktree 裡 `git commit`（`commit-msg`） | 同上（worktree 的訊息檔在共用的 git 目錄底下） |
-| `git push`（`pre-push`） | 登記的檢查收到的兩個參數（remote 名稱與 URL）與標準輸入的每一行，與 git 給 hook 的完全相同；`docker run` 帶 `-i` |
+| 一般簽出裡 `git push`（`pre-push`），一次推兩個 ref | 登記的兩支檢查收到的兩個參數（remote 名稱與 URL）都與 git 給 hook 的相同；兩支收到的標準輸入都是完整的一份，兩行都在 |
+| worktree 裡 `git push`（`pre-push`），一次推兩個 ref | 同上 |
 | 登記了兩支檢查 | 依檔名順序都執行 |
-| 一支檢查失敗 | hook 非零結束並轉述它的原因；`git commit` 沒有產生新的 commit |
-| `docker` 不在、或 `docker run` 失敗 | hook 非零結束並說明原因；不放行 |
-| 環境裡有 `CM_TEST_LOCAL=1` | 照樣轉進容器（`docker` 被呼叫），不改在主機跑 |
+| 兩支檢查都失敗 | hook 非零結束，逐支列出兩支的名稱與它們自己印的原因；訊息不提 `docker`；`git commit` 沒有產生新的 commit |
+| 有登記的檢查，`PATH` 上先找到的 `bash` 主版本低於 4 | 非零結束，訊息寫明要 bash 4 以上與下一步（macOS 用 `brew install bash`）；登記的檢查沒有被執行；訊息不提 `docker` |
+| 有登記的檢查，`PATH` 上找不到 `python3` | 非零結束，指名缺 `python3` 並寫出下一步；登記的檢查沒有被執行；`git commit` 沒有產生新的 commit |
+| 有登記的檢查，`PATH` 上找不到 `git` | 非零結束，指名缺 `git` 並寫出下一步；登記的檢查沒有被執行 |
+| 照 repo 實際登記的 commit-msg 檢查（`10-single-task.sh`、`20-no-attribution.sh`，#405）跑 `git commit` | 乾淨的訊息照樣產生 commit；訊息含署名時 `20-no-attribution.sh` 擋下並印出它的原因，沒有產生新的 commit |
+| repo 裡的說明與規格 | 沒有任何一處寫著 git hook 的檢查要經 `script/test.sh` 的 hook 入口執行（#406 拿掉了那個入口） |
 
-**這兩組規格擋不住的**：真的容器裡，worktree 的訊息檔路徑經掛載讀得到——轉接的 `docker` 跑在同一個檔案系統上，
-這件事在它那裡一定成立。掛載本身由「在 git worktree 裡轉進容器」那兩條規格（`docker run` 的參數，#103）觀察；
-真的容器裡讀到檔案的那一次，由 #391 的 PR 在 CI 的 Linux runner 上實跑一次留下證據，不是自動化的。
-`git commit --no-verify`、`git push --no-verify` 會跳過本機 hook，這組規格也觀察不到——CI 的檢查是最後一道。
+`commit-msg` 時 git 不給標準輸入，`githook.sh` 也不讀它：每支檢查收到空的標準輸入，直接在終端機執行
+`githook.sh commit-msg <檔>` 時不會停下來等輸入。`pre-push` 的標準輸入先存成暫存檔，再逐支餵完整的一份。
+
+**這組規格擋不住的**：
+- **主機工具和檢查映像不同造成的差異。** 規格跑在檢查映像裡（CI），主機上的 bash、python3、git 版本與映像不同，
+  同一支檢查的結果可能不一樣。CI 在映像裡跑同一支檢查，是最後一道（ADR-00000027 的教訓仍成立）。
+- **`githook.sh` 自己在 bash 3.2 底下跑到印出說明那一步。** 映像裡沒有 bash 3.2，規格只造得出「`PATH` 上先找到的
+  bash 回報 3」；`githook.sh` 在那之前只用 bash 3.2 也有的寫法，這件事由人看，不是自動化的。
+- **圖形介面的 git 用戶端帶的 `PATH`。** 它若先找到 macOS 內建的 bash 3.2，照上表擋下並說明，不會默默通過；
+  規格以假 `bash` 觀察這條判斷，沒有實際開圖形用戶端。
+- `git commit --no-verify`、`git push --no-verify` 與沒有打開 hook 的 clone 會跳過本機 hook——CI 的檢查是最後一道。
 
 **`lint_checkpoints.sh` 不由 `script/test.sh` 執行，是 CI 的一個獨立 job。**
 它需要 GitHub API 讀被引用的 issue，而 `test.sh` 在容器裡跑、那裡沒有 token。規格以
@@ -2109,7 +2127,7 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 | `script/githook-checks/commit-msg/20-no-attribution.sh` | T19（把訊息檔交給 `lint_attribution.sh commit-msg`，#405） | 已落地 |
 | `script/githook-checks/pre-push/20-single-task.sh` | T19（把 pre-push 的標準輸入交給 `lint_single_task.sh pre-push`，#351） | 已落地 |
 | `script/githook-checks/pre-push/10-run-name.sh` | T19（把 pre-push 的標準輸入交給 `lint_run_name.sh --pre-push`，#350） | 已落地 |
-| `script/githook.sh` | T19（本機 git hook 的共用入口，檢查轉進檢查映像，#391） | 已落地 |
+| `script/githook.sh` | T19（本機 git hook 的共用入口，在主機上直接執行登記的檢查，#391、#406） | 已落地 |
 | `script/local/cfg/cfg.sh` | 無——見「刻意的空格」 | 已落地 |
 
 這張表涵蓋 `src/` 底下的每個 `.py` 與 `script/` 底下的每支 `.sh`。**新增一個模組或
