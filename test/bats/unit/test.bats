@@ -240,6 +240,25 @@ in_image() {
   [ "$(grep -cxF -- '--volume' "${DOCKER_ARGV}")" -eq 1 ]
 }
 
+# ── git hook 的入口拿掉了（#406）────────────────────────────────────────────────
+#
+# 本機 git hook 登記的檢查改由 script/githook.sh 在主機上直接執行（githook.bats），這支不再有那個入口。
+
+@test "--hook 不是認得的參數：以 2 結束並指名它（#406）" {
+  # cat：不認得的參數之後印的 usage 用 cat 印 heredoc；少了它，結束碼會是 cat 的 127，不是要判的 2。
+  link_tool cat
+  printf 'chore: 舊的入口\n' >"${WORK}/msg"
+
+  gate CM_IN_TEST_IMAGE=1 "${SCRIPT}" --hook commit-msg "${WORK}/msg" </dev/null
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"不認得的參數 --hook"* ]]
+}
+
+@test "腳本裡沒有 git hook 的入口：沒有 run_hook 與 --hook（#406）" {
+  [ "$(grep -c -e 'run_hook' -e '--hook' "${SCRIPT}")" -eq 0 ]
+}
+
 # ── 映像的層從哪裡來（#358）──────────────────────────────────────────────────
 #
 # CI 的每個 job 都是新機器，CM_TEST_IMAGE_CACHE 讓它們從 GitHub Actions 的快取取層。

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 # git 的 pre-push 進入點（#391）。只把 git 給的參數（與標準輸入）原樣交給 script/githook.sh；
-# 登記的檢查在檢查映像裡跑，不在主機上。啟用：just setup hooks；解除：just setup hooks-off。
+# 登記的檢查由它在這台主機上直接執行，不經 docker（#406）。啟用：just setup hooks；解除：just setup hooks-off。
 exec "$(dirname -- "$0")/../script/githook.sh" pre-push "$@"

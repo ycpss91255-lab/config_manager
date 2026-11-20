@@ -24,7 +24,6 @@ usage() {
   cat <<'USAGE'
 用法：script/test.sh [--level <name>] [--lint [<tool>]] [--file <path>] [--filter <regex>]
                      [--part fast | api <i>/<n> | web <i>/<n> | bats | gate]
-                     [--hook <commit-msg|pre-push> [參數…]]
 
   （不帶參數）        lint ＋ 全部層級 ＋ 覆蓋率
   --level <name>      unit | integration | system | acceptance
@@ -43,10 +42,6 @@ usage() {
                                    再交給 script/coverage_gate.sh
                       fast、api、web 把結果寫在 ci-parts/<段名>/，gate 讀那裡。
                       lint 那一段就是 --lint。
-  --hook <進入點> [參數…]
-                      git hook 登記的檢查（commit-msg | pre-push，#391）：依檔名順序執行
-                      script/githook-checks/<進入點>/ 底下的檢查，參數與標準輸入原樣交給每一支。
-                      由 script/githook.sh 呼叫（just setup hooks 之後 git 會觸發它）
 
 在 docker/Dockerfile.test-tools 裡執行，那份映像帶齊每一支檢查工具。
 主機不是這個專案的證據：它的 Python、它的 pytest、它缺席的 linter，
@@ -190,9 +185,6 @@ dispatch_to_container() {
     *) _run+=(--volume "${_git_common}:${_git_common}") ;;
   esac
 
-  # git hook 的入口（#391）要把標準輸入接進容器：pre-push 每一行 ref 都在那裡。只有這個入口帶
-  # -i，其餘的執行不讀標準輸入，行為不變。
-  [[ "${1:-}" == --hook ]] && _run+=(-i)
   _run+=(--workdir /repo "${TEST_IMAGE}" ./script/test.sh "$@")
   exec "${_run[@]}"
 }
@@ -333,46 +325,6 @@ _NOT_RUN=""
 _note_not_run() {
   [[ -n "${_NOT_RUN}" ]] || _NOT_RUN="$(mktemp)"
   printf '%s\n' "$1" >>"${_NOT_RUN}"
-}
-
-# git hook 登記的檢查（#391）：script/githook-checks/<進入點>/ 底下的可執行檔，依檔名順序執行。
-# 每一支都拿到 git 給 hook 的同一組參數與同一份標準輸入（先存下來，再逐支餵）。任一支失敗，
-# 整體非零結束；每一支失敗都指名，原因由它自己印。由 script/githook.sh 呼叫，在檢查映像裡跑。
-run_hook() {
-  local entry="${1:-}"
-  case "${entry}" in
-    commit-msg | pre-push) shift ;;
-    *)
-      printf 'test.sh: 不認得的 git hook 進入點「%s」，沒有執行任何檢查\n' "${entry}" >&2
-      printf 'test.sh: 下一步：--hook 只接受 commit-msg 或 pre-push（見 script/githook.sh）\n' >&2
-      return 2
-      ;;
-  esac
-
-  local -a checks=()
-  local check
-  for check in "${REPO_ROOT}/script/githook-checks/${entry}"/*; do
-    [[ -f "${check}" && -x "${check}" ]] && checks+=("${check}")
-  done
-  if ((${#checks[@]} == 0)); then
-    printf 'test.sh: %s 目前沒有登記任何檢查，放行\n' "${entry}"
-    return 0
-  fi
-
-  local input failed=0 code
-  input="$(mktemp)"
-  cat >"${input}"
-  for check in "${checks[@]}"; do
-    code=0
-    "${check}" "$@" <"${input}" || code=$?
-    if ((code != 0)); then
-      printf 'test.sh: %s 的檢查 %s 沒有通過（結束碼 %d）\n' "${entry}" "${check#"${REPO_ROOT}"/}" "${code}" >&2
-      printf 'test.sh: 下一步：照上面它說的原因修正，再重新 commit 或 push\n' >&2
-      failed=1
-    fi
-  done
-  rm -f "${input}"
-  return "${failed}"
 }
 
 report_not_run() {
@@ -816,7 +768,6 @@ main() {
       ;;
     --filter) shift; [[ $# -gt 0 ]] || { usage >&2; exit 2; }; exec pytest test/pytest -k "$1" ;;
     --part) shift; run_part "$@" ;;
-    --hook) shift; run_hook "$@" ;;
     *) printf 'test.sh: 不認得的參數 %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
 }

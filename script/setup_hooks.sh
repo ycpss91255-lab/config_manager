@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# `just setup hooks`／`just setup hooks-off` 的本體（#391）：打開或關掉這個 repo 的本機 git hook。
+# `just setup hooks`／`just setup hooks-off` 的本體（#391、#406）：打開或關掉這個 repo 的本機 git hook。
 #
 # 只動這個 repo 的本地設定裡的 `core.hooksPath`（`git config --local`），不改全域（~/.gitconfig）、
 # 系統設定，不安裝任何工具。**這份本地設定由同一個 repo 的所有 worktree 共用**（git-worktree 文件），
@@ -79,7 +79,7 @@ turn_on() {
   git config --local core.hooksPath "${WANT}"
   printf 'setup_hooks: 已啟用：這個 repo 的本地 core.hooksPath 設成 %s\n' "${WANT}"
   printf 'setup_hooks: 這份設定由這個 repo 的所有 worktree 共用；簽出裡沒有 .githooks/ 的 worktree 不會執行 hook\n'
-  printf 'setup_hooks: 檢查在檢查映像裡跑（第一次會先建映像）；解除：just setup hooks-off\n'
+  printf 'setup_hooks: 登記的檢查在這台主機上直接跑，不經 docker（要 bash 4 以上、python3、git，缺了 commit 與 push 會被擋下並說明）；解除：just setup hooks-off\n'
 }
 
 turn_off() {

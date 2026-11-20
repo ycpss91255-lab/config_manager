@@ -49,6 +49,13 @@ outside_configs() {
   [[ "${output}" == *".githooks/"*"不會執行"* ]]
 }
 
+@test "打開時訊息說明 hook 登記的檢查在這台主機上直接跑，不提檢查映像（#406）" {
+  run "${SCRIPT}" on
+
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"這台主機上直接跑"* && "${output}" != *"檢查映像"* ]]
+}
+
 @test "打開與關掉都不改全域與系統設定檔" {
   local before
   before="$(outside_configs)"
