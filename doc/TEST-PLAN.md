@@ -1393,6 +1393,8 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/hooks/pre/run.sh`（#385） | `test/bats/unit/hooks_pre_run.bats` |
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
 | `script/lint_agents_link.sh`（#404） | `test/bats/unit/lint_agents_link.bats` |
+| `script/claude-hooks/no-attribution.sh`、`.claude/settings.json` 的 `attribution` 與 PreToolUse 接線（#405） | `test/bats/unit/no_attribution.bats` |
+| `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
 
 **`script/lint_messages.sh` 的管轄範圍從 Python 擴到 shell**（#133）。先前它的預設
 標的只有 `src/config_manager`，單檔模式還明寫「不是 `.py` 就什麼都不檢查」，所以
@@ -1869,6 +1871,74 @@ symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格
 **它擋不住的**：`AGENTS.md` 的內容對不對——它只看連結的形狀。在主機上把 symlink 換成一般檔、還沒 commit 時，要在本機跑
 `./script/test.sh --lint` 才抓得到；沒跑就要等 commit 之後的 CI。
 
+**署名防護被觀察的是「要寫進 commit、PR、issue 的文字，有沒有命中 `script/attribution-patterns.txt` 的樣式，以及檢查的那一層看不看得到那段文字」**（#405）。
+樣式清單只有一份：一行一個延伸正規式，不分大小寫、逐行比對；共同作者行、`Claude-Session:` 行、`Generated with [Claude Code]`
+那一行只認行首，完整的 session 網址（帶 ID）任何位置都算。三個呼叫端都讀這一份：Claude Code 的 PreToolUse hook
+`script/claude-hooks/no-attribution.sh`、登記的 commit-msg 檢查 `20-no-attribution.sh`（轉給 `script/lint_attribution.sh commit-msg`）、
+CI 的 `attribution` job（`script/lint_attribution.sh pr`）。
+
+**`script/claude-hooks/no-attribution.sh`** 由 `.claude/settings.json` 以 PreToolUse、matcher `Bash` 掛上，在主機上跑，只讀工具呼叫的
+輸入：標準輸入那份 JSON 裡的指令文字與 `cwd`，以及指令帶入的檔；不跑專案程式（#405 的 Q1）。它檢查 `git commit`、
+`gh pr|issue create|edit|comment`、`gh release create|edit` 與會寫入的 `gh api`：**先取出要寫出去的文字，再逐行比對**，不拿整條指令去比。
+看不到該看的文字時擋下並寫出下一步，不默默放行（Q8）。規格把 hook 會收到的 JSON 餵進標準輸入，看結束碼與訊息。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `git commit -m` 的訊息有一行共同作者行 | 以 2 結束，指名第幾個 `-m`、第幾行與命中的樣式 |
+| 共同作者行就是 `-m` 訊息的第一行 | 以 2 結束，指名第 1 行 |
+| 訊息乾淨、共同作者行放在 `--trailer`（照 `<鍵>: <值>` 當成一行） | 以 2 結束，指名那個 `--trailer` |
+| `gh pr create --title t --body-file f`，f 有 `Generated with [Claude Code]` 那一行 | 以 2 結束，指名 `--body-file` 與行號 |
+| `gh issue comment` 的內文在一段說明的行中引用完整的 session 網址 | 以 2 結束；擋下的訊息裡沒有那個網址 |
+| `gh api` 寫入的三種帶法：`-f body=…` 的值、`-F body=@f` 的檔、沒有 `-X` 的 `--input j.json`（字串欄位解碼後比對） | 各以 2 結束並指名來源 |
+| 只在行中引用 `Co-Authored-By`、`Generated with` 字樣，session 網址寫成 `session_<ID>`（含直接寫在 `--body` 參數裡的） | 以 0 結束 |
+| `gh issue create --title t --body-file f`，f 是 #269、#405 的內文（`test/fixtures/attribution/`，11/21 的快照） | 以 0 結束 |
+| `git log --grep Co-Authored-By`、`gh pr view`、只讀的 `gh api` | 以 0 結束 |
+| 清單外的旗標：`gh pr edit 12 --attach a.png`、`gh pr edit 12 --body-file f --attach a.png`（f 乾淨） | 以 2 結束；訊息指名 `--attach`，下一步寫附件在網頁上加、或把附件網址寫進 `--body-file` 的內文 |
+| 讀不到 hook 輸入（空的、不是 JSON、沒有指令文字） | 以 2 結束並寫出下一步 |
+| `--body-file` 指的檔不存在 | 以 2 結束並寫出下一步 |
+| 從標準輸入讀：`gh api -F body=@-`、`gh api --input -`、`gh issue create --title t --body-file -`、`git commit -F -` | 各以 2 結束 |
+| 值來自 shell 變數或指令替換 | 以 2 結束 |
+| 互動或編輯器：`gh issue create -e`、只帶 `--body-file` 沒帶標題的 `gh issue create` | 各以 2 結束 |
+| `git commit -C HEAD~1`、`git commit --no-verify -m x` | 各以 2 結束 |
+| `git commit --amend --no-edit`、`git commit --amend --no-edit --trailer "x: y"` | 各以 2 結束，下一步寫明帶訊息（`--amend -m …` 或 `--amend -F <檔>`） |
+| `git commit --amend -m "clean"` | 以 0 結束 |
+| 同一條指令先 `cd` 到別的目錄，再以相對路徑帶入檔 | 讀的是 `cd` 之後那個目錄裡的檔 |
+| 寫入放在指令替換裡（`url=$(gh pr create …)`） | 照樣檢查 |
+| 帶入的檔在同一條指令裡先被重新導向寫出 | 以 2 結束（hook 讀到的是執行前的內容） |
+| PATH 上沒有 python3 | 以 2 結束並寫出下一步 |
+| `.claude/settings.json` | `attribution` 是 `{"commit": "", "pr": "", "sessionUrl": false}`；PreToolUse 有一項 matcher 是 `Bash`、呼叫這支腳本 |
+
+**`script/lint_attribution.sh`** 有兩種模式：`pr` 是 CI 的 `attribution` job，讀 PR 範圍內每個 commit 的訊息、PR 標題與描述（要 gh，
+跑在映像之外，只在 pull_request 跑）；`commit-msg` 由登記的 commit-msg 檢查呼叫，讀 git 給的訊息檔。失敗時只印位置（哪個 commit、
+標題或描述、第幾行）與命中的樣式，不印命中的內容，免得完整的 session 網址進到公開的 CI 紀錄。規格在暫存目錄建一份真的 git repo，
+PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `pr`：PR 範圍內有一個 commit 的訊息命中 | 非零結束，指名那個 commit 與行號 |
+| `pr`：PR 標題命中 | 非零結束，指名標題 |
+| `pr`：PR 描述命中 | 非零結束，指名描述與行號 |
+| `pr`：commit、標題、描述都沒有命中 | 以 0 結束 |
+| `pr`：失敗時的輸出 | 只有位置與樣式：命中的共同作者行與完整的 session 網址都不在輸出裡 |
+| `pr`：讀不到 PR | 非零結束，不放行 |
+| 登記的 commit-msg 檢查，訊息檔含任一條樣式 | 非零結束 |
+| 登記的 commit-msg 檢查，乾淨的訊息檔 | 以 0 結束 |
+| 三個呼叫端各自換上一份改過的樣式清單（複製一份樹） | 都照改過的那份判定：讀的是同一個 `script/attribution-patterns.txt` |
+| `ci.yaml` 的 `ci-rollup`：照 workflow 裡寫的 needs 與三組規則，pull_request 時 `attribution` 被跳過 | 不放行，指名 `attribution` |
+| 同上，merge_group 與 push 到 main 時 `attribution` 被跳過 | 放行 |
+
+**它擋不住的**（這三層合起來）：
+- 網頁上直接寫的內容；cloud 工作階段、`disableAllHooks`；優先順序較高的設定蓋掉 `attribution`（hook 與 CI 仍會擋）。
+- `sessionUrl` 在本機驗證不了：它管的是 cloud 或 Remote Control 工作階段加的 session 連結。
+- `--no-verify` 跳過的是 git 的 commit-msg 檢查（Claude Code 的 hook 另外擋這個旗標；CI 仍會擋 PR 裡的 commit）。
+- 在網頁上改 PR 標題或描述之後，`ci.yaml` 的 `pull_request` 沒有 `edited`，`attribution` 不會重跑，原本的綠燈留在同一個 head 上（#407 補觸發條件）。
+- `run-name` 把 PR 標題印進 workflow 的執行名稱：標題含完整網址時，它仍會出現在執行名稱裡。這支只管自己的輸出。
+- 樣式以外的寫法，例如沒從行首開始的共同作者行。
+- hook 只看指令文字本身：經腳本檔、git 或 gh 的別名、指令名稱來自變數這類方式執行的寫入看不到；同一條指令裡用重新導向與 `tee`
+  以外的程式先寫出帶入的檔時，hook 讀到的是執行前的內容；`gh pr review --body`、`gh issue close --comment`、`gh pr merge --body` 這類
+  #405 沒列的 gh 寫入不檢查。commit 與 PR 標題、描述有 commit-msg 檢查與 CI 這兩道；留言沒有。
+- 既有的舊內容：說明裡的署名另案處理，git 歷史不改。
+
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
 設計 §0.4：「所有規範必須可由工具檢查——**無法自動檢查的規範等同不存在**。」
@@ -2033,7 +2103,10 @@ symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格
 | `script/lint_run_name.sh` | T19（workflow 的 run-name 分得出對應的 commit，#350） | 已落地（CI 的 `run-name` job 與本機 pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_single_task.sh` | T19（標題任務編號限制，#351） | 已落地（CI 的 `single-task` job 與本機 commit-msg／pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_agents_link.sh` | T19（規範正本 `AGENTS.md` 與指向它的 `CLAUDE.md` symlink，git 樹與工作樹分開檢查，#404） | 已落地 |
+| `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 未落地（#405） |
+| `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 未落地（#405） |
 | `script/githook-checks/commit-msg/10-single-task.sh` | T19（把訊息檔交給 `lint_single_task.sh commit-msg`，#351） | 已落地 |
+| `script/githook-checks/commit-msg/20-no-attribution.sh` | T19（把訊息檔交給 `lint_attribution.sh commit-msg`，#405） | 未落地（#405） |
 | `script/githook-checks/pre-push/20-single-task.sh` | T19（把 pre-push 的標準輸入交給 `lint_single_task.sh pre-push`，#351） | 已落地 |
 | `script/githook-checks/pre-push/10-run-name.sh` | T19（把 pre-push 的標準輸入交給 `lint_run_name.sh --pre-push`，#350） | 已落地 |
 | `script/githook.sh` | T19（本機 git hook 的共用入口，檢查轉進檢查映像，#391） | 已落地 |
