@@ -37,7 +37,7 @@ summary = '誰、在什麼環境、照什麼步驟做了什麼，結果如何'
 |---|---|
 | `by` | 簽核的人，`姓名 <email>`。不能是空的 |
 | `date` | 驗收完成的日期，TOML 的日期型別（不是字串） |
-| `evidence` | 指到實際驗收證據的網址：這個 repo 的 issue 或 PR（可以帶 `#issuecomment-…`）。證據本身要附在那裡（CLAUDE.md：關閉帶驗收條件的 issue 時，證據附在 issue 上） |
+| `evidence` | 指到實際驗收證據的網址：這個 repo 的 issue 或 PR（可以帶 `#issuecomment-…`）。證據本身要附在那裡（AGENTS.md：關閉帶驗收條件的 issue 時，證據附在 issue 上） |
 | `summary` | 一句話說明做了什麼、結果。不能是空的 |
 
 工具會擋下的：
