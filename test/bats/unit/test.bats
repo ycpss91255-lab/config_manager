@@ -583,12 +583,52 @@ write_part() {
   : >"${PARTS_REPO}/ci-parts/${name}/python.coverage"
 }
 
-# 一段的 web 報告：index.html 共 10 行程式碼，$2 是沒被執行到的行（JSON 陣列）。
+# 一段的 web 報告（逐檔，#359）：js/a.js 共 10 行程式碼、js/b.js 共 5 行。$2、$3 是兩個檔各自沒被
+# 執行到的行（JSON 陣列，$3 預設全都執行到）；$4 是 b.js 在這一段有沒有被載入（預設 true）。
 write_web_report() {
-  local name="$1" uncovered="$2" count
-  count="$(python3 -c 'import json, sys; print(len(json.loads(sys.argv[1])))' "${uncovered}")"
-  printf '{"area": "web", "file": "src/config_manager/web/index.html", "covered_lines": %s, "code_lines": 10, "percent": 0, "uncovered_lines": %s}\n' \
-    "$(( 10 - count ))" "${uncovered}" >"${PARTS_REPO}/ci-parts/${name}/web.json"
+  local name="$1" a="$2" b="${3:-[]}" b_loaded="${4:-true}"
+  python3 - "${PARTS_REPO}/ci-parts/${name}/web.json" "${a}" "${b}" "${b_loaded}" <<'PY'
+import json
+import sys
+
+out, a, b, b_loaded = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]), sys.argv[4] == "true"
+
+
+def entry(name, code, uncovered, loaded):
+    return {
+        "file": f"src/config_manager/web/js/{name}", "sha256": f"sha-of-{name}", "loaded": loaded,
+        "covered_lines": code - len(uncovered), "code_lines": code, "uncovered_lines": uncovered,
+    }
+
+
+files = [entry("a.js", 10, a, True), entry("b.js", 5, b, b_loaded)]
+report = {
+    "area": "web", "files": files, "unloaded": [f["file"] for f in files if not f["loaded"]],
+    "covered_lines": sum(f["covered_lines"] for f in files), "code_lines": 15, "percent": 0,
+}
+json.dump(report, open(out, "w", encoding="utf-8"))
+PY
+}
+
+# 改一段 web 報告裡的一個檔：$2 是檔名結尾，$3 是一段 Python，對那一筆 entry（與整份 report）動手。
+edit_web_entry() {
+  local name="$1" suffix="$2" change="$3"
+  python3 - "${PARTS_REPO}/ci-parts/${name}/web.json" "${suffix}" "${change}" <<'PY'
+import json
+import sys
+
+path, suffix, change = sys.argv[1:4]
+report = json.load(open(path, encoding="utf-8"))
+entry = next(e for e in report["files"] if e["file"].endswith(suffix))
+exec(change, {"entry": entry, "report": report})
+json.dump(report, open(path, "w", encoding="utf-8"))
+PY
+}
+
+# 合併後的報告裡一個檔的「執行過的行數 沒執行到的行」。
+merged_entry() {
+  python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); e = next(f for f in r["files"] if f["file"].endswith(sys.argv[2])); print(e["covered_lines"], e["uncovered_lines"])' \
+    "${PARTS_REPO}/.coverage-web.json" "$1"
 }
 
 # fast 一段、api 一份、web 兩份，合起來恰好是那十條。
@@ -603,15 +643,91 @@ write_complete_parts() {
   write_web_report web-2-of-2 '[3, 5, 7]'
 }
 
-@test "gate 合併 web 覆蓋率時，沒被執行到的行取各段的交集" {
+@test "gate 合併 web 覆蓋率時，同一個檔沒被執行到的行取各段的交集" {
   make_parts_repo
   write_complete_parts
 
   in_parts_repo --part gate
 
-  # 一份沒執行到 2、3、5，另一份沒執行到 3、5、7：兩份都沒執行到的只有 3 與 5。
-  [ "$(python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(r["covered_lines"], r["uncovered_lines"])' \
-    "${PARTS_REPO}/.coverage-web.json")" = "8 [3, 5]" ]
+  # a.js 一份沒執行到 2、3、5，另一份沒執行到 3、5、7：兩份都沒執行到的只有 3 與 5。
+  [ "$(merged_entry /a.js)" = "8 [3, 5]" ]
+}
+
+@test "gate 合併後的 web 總數是各檔合併後的數字相加（#359）" {
+  make_parts_repo
+  write_complete_parts
+
+  in_parts_repo --part gate
+
+  # a.js 合併後 8/10、b.js 兩份都全執行到 5/5：總數 13/15。
+  [ "$(python3 -c 'import json, sys; r = json.load(open(sys.argv[1])); print(r["covered_lines"], r["code_lines"])' \
+    "${PARTS_REPO}/.coverage-web.json")" = "13 15" ]
+}
+
+@test "一份分片列的 web 檔案與其他段不同時 gate 不放行，並指名多出來的檔（#359）" {
+  make_parts_repo
+  write_complete_parts
+  edit_web_entry web-2-of-2 /b.js 'report["files"].append(dict(entry, file="src/config_manager/web/js/c.js"))'
+
+  in_parts_repo --part gate
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"ci-parts/web-2-of-2/web.json 列的檔案與 ci-parts/web-1-of-2/ 不同：多了 src/config_manager/web/js/c.js"* ]]
+}
+
+@test "同一個 web 檔在兩段的內容不同時 gate 不放行，並指名那個檔（#359）" {
+  # 行號只在內容相同時才對得起來；內容不同還取交集，得到的是兩份不同程式碼的行號混在一起。
+  make_parts_repo
+  write_complete_parts
+  edit_web_entry web-2-of-2 /a.js 'entry["sha256"] = "sha-of-another-a.js"'
+
+  in_parts_repo --part gate
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"src/config_manager/web/js/a.js 在 ci-parts/web-2-of-2/ 與 ci-parts/web-1-of-2/ 的內容不同"* ]]
+}
+
+@test "web 報告的檔案缺欄位時 gate 不放行（#359）" {
+  make_parts_repo
+  write_complete_parts
+  edit_web_entry web-1-of-2 /a.js 'del entry["sha256"]'
+
+  in_parts_repo --part gate
+
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"ci-parts/web-1-of-2/web.json 有檔案缺了"* ]]
+}
+
+@test "全部分片都沒載入的 web 模組，覆蓋 0 行算進分母（#359）" {
+  make_parts_repo
+  write_complete_parts
+  write_web_report web-1-of-2 '[2, 3, 5]' '[1, 2, 3, 4, 5]' false
+  write_web_report web-2-of-2 '[3, 5, 7]' '[1, 2, 3, 4, 5]' false
+
+  in_parts_repo --part gate
+
+  [ "$(merged_entry /b.js)" = "0 [1, 2, 3, 4, 5]" ]
+}
+
+@test "全部分片都沒載入的 web 模組被指名（#359）" {
+  make_parts_repo
+  write_complete_parts
+  write_web_report web-1-of-2 '[2, 3, 5]' '[1, 2, 3, 4, 5]' false
+  write_web_report web-2-of-2 '[3, 5, 7]' '[1, 2, 3, 4, 5]' false
+
+  in_parts_repo --part gate
+
+  [[ "${output}" == *"全部分片都沒有載入的 web 模組，已算進分母、覆蓋 0 行：src/config_manager/web/js/b.js"* ]]
+}
+
+@test "只要有一段載入過，那個 web 模組就不算沒載入（#359）" {
+  make_parts_repo
+  write_complete_parts
+  write_web_report web-1-of-2 '[2, 3, 5]' '[1, 2, 3, 4, 5]' false
+
+  in_parts_repo --part gate
+
+  [[ "${output}" != *"全部分片都沒有載入的 web 模組"* ]]
 }
 
 @test "gate 把每一段的 Python 覆蓋率資料都交給 coverage combine" {

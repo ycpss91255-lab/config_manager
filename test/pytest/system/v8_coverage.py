@@ -5,10 +5,11 @@
 
 ## 為什麼是 V8 而不是別的
 
-`web/index.html` 的 JS 是行內腳本，pytest 量不到；而 PDF §3.3 說前端「不需框架也
-不需打包流程」，所以 c8／nyc／istanbul 那條 npm 路線是被排除的——為了量覆蓋率而
-引進一整套 Node 工具鏈，量到的東西會比它帶進來的東西便宜。瀏覽器自己就會算：
-Chromium 的 CDP `Profiler` 領域直接給得出這份資料，唯一的相依是本來就要有的瀏覽器。
+`web/` 的 JS（#359 起是 `web/js/` 底下的原生 ES 模組）在瀏覽器裡跑，pytest 量不到；
+而 PDF §3.3 說前端「不需框架也不需打包流程」，所以 c8／nyc／istanbul 那條 npm 路線
+是被排除的——為了量覆蓋率而引進一整套 Node 工具鏈，量到的東西會比它帶進來的東西
+便宜。瀏覽器自己就會算：Chromium 的 CDP `Profiler` 領域直接給得出這份資料，唯一的
+相依是本來就要有的瀏覽器。
 
 ## V8 給的是位元組區間，不是行
 
@@ -106,7 +107,7 @@ def _refuse_astral(source: str) -> None:
     astral = [character for character in source if ord(character) > _BMP_MAX]
     if astral:
         raise ValueError(
-            f"index.html 的行內 script 含基本平面外的字元 {astral[:3]}，"
+            f"web 的腳本含基本平面外的字元 {astral[:3]}，"
             f"V8 的位移與 Python 的字串索引會就此對不齊。"
             f"下一步：把那些字元移出 script（放進 HTML 或 CSS），"
             f"或改用 UTF-16 位移重寫 v8_coverage 的對位"
