@@ -5,6 +5,7 @@
 | 進入點 | 檢查 | CI 上的同一支 |
 |---|---|---|
 | `commit-msg` | `10-single-task.sh`：commit 主旨的標題任務編號限制——最多一個 F 項、一個 `#` 編號、一個 scope（#351） | `single-task` job |
+| `commit-msg` | `20-no-attribution.sh`：commit 訊息的每一行有沒有 Claude 署名或完整的 session 網址，樣式在 `script/attribution-patterns.txt`（#405） | `attribution` job |
 | `pre-push` | `10-run-name.sh`：要推的 commit 裡，workflow 的 `run-name` 分得出對應的 commit（#350） | `run-name` job |
 | `pre-push` | `20-single-task.sh`：要推的新 commit 的主旨，同上的標題任務編號限制（#351） | `single-task` job |
 

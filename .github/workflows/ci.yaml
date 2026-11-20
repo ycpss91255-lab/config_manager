@@ -40,7 +40,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  # merge queue（#356）。只在 pull request 上跑的三個 job 在這裡不跑（它們的 if: 只認
+  # merge queue（#356）。只在 pull request 上跑的那幾個 job 在這裡不跑（它們的 if: 只認
   # pull_request），與 push 到 main 時一樣；acceptance 只在 push 到 main 跑。ci_rollup.sh 對
   # 這兩組在 merge_group 時允許 skipped，其餘每次都該跑的仍要 success。
   merge_group:
@@ -113,6 +113,26 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: ./script/lint_single_task.sh pr "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
+
+  attribution:
+    # Claude 署名與 session 連結（#405）：PR 範圍內每個 commit 的訊息、PR 標題與描述。樣式在
+    # script/attribution-patterns.txt，本機的 commit-msg 檢查與 Claude Code 的 hook 讀同一份。失敗時只印
+    # 位置與樣式，不印命中的內容（這裡的紀錄是公開的）。跑在映像之外，與 checkpoints 同一個理由：它要 gh
+    # 讀 PR，容器裡沒有 token。
+    #
+    # 已知缺口：上面的 pull_request 沒寫 types，只在 opened、synchronize、reopened 跑；在網頁上改 PR 標題
+    # 或描述不會重跑這個 job，原本的綠燈留在同一個 head 上。觸發條件由合併規則那張 issue（#407）補，
+    # 這裡不改，免得兩邊改同一處。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # rev-list base..HEAD 需要完整歷史。
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./script/lint_attribution.sh pr "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
 
   run-name:
     # workflow 的 run-name 分得出每一次執行對應的 commit（#350）。**獨立的 job、獨立的腳本**，不併進
@@ -383,6 +403,7 @@ jobs:
       - checkpoints
       - test-interfaces
       - single-task
+      - attribution
       - run-name
       - lint
       - unit-integration
@@ -405,5 +426,5 @@ jobs:
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
           --always "run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
-          --pull-request "commit-message checkpoints test-interfaces single-task"
+          --pull-request "commit-message checkpoints test-interfaces single-task attribution"
           --main-push "acceptance"

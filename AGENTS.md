@@ -74,6 +74,22 @@
 「Generated with Claude Code」那一行，也不放 claude.ai 的 session 連結。共同作者行會讓 GitHub 把一個
 與本專案無關的 `@claude` 帳號列進 repo 的 Contributors；工具預設會加，所以這條要明寫。
 
+由這幾層擋（#405），樣式只有一份 `script/attribution-patterns.txt`：
+
+- repo 的 `.claude/settings.json` 設 `attribution`（commit、pr 空字串，`sessionUrl` false），Claude Code 不產生署名。
+- Claude Code 的 PreToolUse hook `script/claude-hooks/no-attribution.sh`：`git commit`、`gh pr|issue create|edit|comment`、
+  `gh release create|edit`、會寫入的 `gh api` 執行前，取出要寫的文字逐行比對。它在主機上跑，只讀指令文字與帶入的檔，
+  不跑專案程式（#405 的 Q1：維護者允許 Claude Code hook 這樣在主機上跑）。**看不到的寫法一律擋**：值來自變數或
+  指令替換（例如 `-m "$(cat <<'EOF' …)"`）、從標準輸入讀、要開編輯器或互動、清單外的旗標、`--no-verify`、
+  `--amend --no-edit`。commit 訊息寫成字面的 `-m "…"`，或先寫進檔、下一條指令再 `-F <檔>`／`--body-file <檔>`。
+- 本機的 commit-msg 檢查（`just setup hooks` 之後）與 CI 的 `attribution` job（PR 裡每個 commit 的訊息、PR 標題與描述）。
+
+擋不到：網頁上直接寫的內容；cloud 工作階段與 `disableAllHooks`；優先順序較高的設定蓋掉 `attribution`（hook 與 CI 仍會擋）；
+`sessionUrl` 在本機驗證不了；`--no-verify` 跳過的 git commit-msg 檢查；在網頁上改 PR 標題或描述之後 CI 不會重跑（#407 補）；
+PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從行首開始的署名行這類樣式以外的寫法；經腳本檔、別名執行的寫入，
+以及 `gh pr review --body`、`gh issue close --comment` 這類沒列進 hook 的 gh 寫入（留言沒有第二道）；既有的舊內容。逐項見
+`doc/TEST-PLAN.md` T19 的「署名防護」。
+
 ## 品質閘門（本機與 CI 同一組）
 
 **所有檢查一律在容器內執行，絕不對這台主機跑。**
