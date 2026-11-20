@@ -727,7 +727,9 @@ write_complete_parts() {
 
   in_parts_repo --part gate
 
-  [[ "${output}" != *"全部分片都沒有載入的 web 模組"* ]]
+  # 判合併後的報告本身。只看輸出裡「沒有那一句」分不出新舊：舊的合併方式本來就不會印那一句。
+  [ "$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["unloaded"])' \
+    "${PARTS_REPO}/.coverage-web.json")" = "[]" ]
 }
 
 @test "gate 把每一段的 Python 覆蓋率資料都交給 coverage combine" {
