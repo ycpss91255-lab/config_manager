@@ -504,3 +504,49 @@ jobs:
           --always "repo-rules run-name lint unit-integration api bats web-e2e coverage acceptance build compose-smoke backup-drill"
           --pull-request "commit-message checkpoints test-interfaces single-task attribution merge-gate"
           --main-push ""
+
+  merge:
+    # 檢查全過，由 CI 以 merge commit 合併（#407，照 ycpss91255-docker/sim_asset；維護者 11/20 定案 1、3）。
+    # 排在 ci-rollup 之後，不列進它的 needs（ci_rollup.sh 放過排在它之後的 job）。merge-gate、acceptance、
+    # attribution 都經 ci-rollup 等到，不另外列。
+    #
+    # if 明寫 !cancelled() 與 ci-rollup 是 success，不靠「沒有任何 job 被跳過」；再加 sim_asset 的四個條件：
+    # pull_request、base 是 main、同 repo 的分支（fork 拿不到 write 權限，由維護者在網頁上合併）、不是草稿。
+    # 草稿事件的那一輪重跑也會跳過：重跑沿用原本的事件內容。
+    #
+    # 合併前 script/ci_merge.sh 用 API 讀現況，在同一份資料上重判讀 PR 或 issue 資料的檢查（綁定判定、
+    # checkpoints、single-task、test-interfaces、merge-gate、attribution），不沿用前面 job 的綠燈：
+    # --match-head-commit 只鎖 head，改描述、換綁、轉回草稿都可以發生在同一個 sha 上。
+    #
+    # 權限只在這個 job 開 write；actions: read 是重判 TDD red 要讀執行紀錄。用 GITHUB_TOKEN，不建 App 或 PAT。
+    # concurrency 讓兩個進入補作業的 merge job 不會同時查留言、寫留言；不取消進行中的那一個。
+    needs: [ci-rollup]
+    if: >-
+      !cancelled() && needs.ci-rollup.result == 'success' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: merge-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 重判在這一輪事件的 head 上跑（帳本要讀 base..HEAD 與 base 的歷史）。
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          CM_CI_ROLLUP_RESULT: ${{ needs.ci-rollup.result }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./script/ci_merge.sh "${PR_NUMBER}" "${HEAD_SHA}" origin/main

@@ -2263,6 +2263,8 @@ single-task、test-interfaces、merge-gate、`attribution`）在**同一份現�
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
 | `script/lint_merge_gate.sh` | T19（合併前的 TDD red 與 milestone 順序，#407） | 已落地（CI 的 `merge-gate` job 與 merge job 的重判執行，不由 `test.sh --lint` 執行） |
 | `script/lint_repo_rules.sh` | T19（repo 的保護設定和 `AGENTS.md` 的表一致，#407） | 已落地（CI 的 `repo-rules` job 執行，不由 `test.sh --lint` 執行） |
+| `script/ci_merge.sh` | T19（merge job：重判全過才以 merge commit 合併、只關判定出來的 issue、重跑只補作業，#407） | 已落地（CI 的 `merge` job 執行，不由 `test.sh --lint` 執行） |
+| `script/gh_snapshot.sh` | T19（merge job 重判用的同一份資料：每個物件只讀一次，#407） | 已落地（由 `ci_merge.sh` 呼叫） |
 | `script/githook-checks/commit-msg/10-single-task.sh` | T19（把訊息檔交給 `lint_single_task.sh commit-msg`，#351） | 已落地 |
 | `script/githook-checks/commit-msg/20-no-attribution.sh` | T19（把訊息檔交給 `lint_attribution.sh commit-msg`，#405） | 已落地 |
 | `script/githook-checks/pre-push/20-single-task.sh` | T19（把 pre-push 的標準輸入交給 `lint_single_task.sh pre-push`，#351） | 已落地 |
