@@ -134,6 +134,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./script/lint_attribution.sh pr "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
 
+  merge-gate:
+    # 合併前的兩道檢查（#407）：這個 PR 自己的 TDD red（描述的 `## TDD red` 段落連到這個 PR 的一輪
+    # pull_request 執行，失敗在可認定 red 的 job 的 specs 步驟），以及綁定 issue 的 milestone 前面沒有
+    # 還開著的版本。repo 的 ruleset 讀不到 PR 描述與 issue，所以由這裡擋；必要檢查仍只有 ci-rollup。
+    # 讀執行紀錄的 attempt、jobs 與 job 紀錄要 actions: read；job 層的 permissions 會整組取代 workflow
+    # 層的，所以其餘三項唯讀也寫在這裡。跑在映像之外，與 checkpoints 同一個理由。
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 綁定判定讀 base..HEAD 的 commit 訊息與 base 的合併紀錄。
+          fetch-depth: 0
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./script/lint_merge_gate.sh "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
+
   run-name:
     # workflow 的 run-name 分得出每一次執行對應的 commit（#350）。**獨立的 job、獨立的腳本**，不併進
     # lint（維護者 11/12、11/14）：本機的 pre-push hook（script/githook-checks/pre-push/10-run-name.sh）
@@ -434,6 +456,7 @@ jobs:
       - test-interfaces
       - single-task
       - attribution
+      - merge-gate
       - run-name
       - lint
       - unit-integration
@@ -456,5 +479,5 @@ jobs:
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
           --always "run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
-          --pull-request "commit-message checkpoints test-interfaces single-task attribution"
+          --pull-request "commit-message checkpoints test-interfaces single-task attribution merge-gate"
           --main-push "acceptance"
