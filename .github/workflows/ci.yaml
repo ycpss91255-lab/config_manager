@@ -37,14 +37,29 @@ run-name: >-
   || format('{0} {1} @ {2}', github.event_name, github.ref_name, github.sha) }}
 
 on:
+  # push 到 main 保留不動（#407）：merge job 以 GITHUB_TOKEN 合併不會觸發它，只有不是 GITHUB_TOKEN 的
+  # 推送（例如維護者在網頁上合併）才會。去留由 #373 定。
   push:
     branches: [main]
+  # types 寫明（#407，同 sim_asset）：ready_for_review 讓草稿轉成可合併時跑一輪（merge job 才會合併）；
+  # edited 讓使用者或 agent 帳號改標題或描述（例如補 `## TDD red`）時自動重跑。用 GITHUB_TOKEN 做的編輯
+  # 不會產生新的一輪，所以不靠它保證「每次改動都有新的一輪」：合併前一律由 merge job 重判。
   pull_request:
-  # merge queue（#356）。只在 pull request 上跑的那幾個 job 在這裡不跑（它們的 if: 只認
-  # pull_request），與 push 到 main 時一樣；acceptance 只在 push 到 main 跑。ci_rollup.sh 對
-  # 這兩組在 merge_group 時允許 skipped，其餘每次都該跑的仍要 success。
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  # merge queue 的觸發保留，但這個 repo 不用 merge queue（#407：合併由 CI 的 merge job 做），實際不會
+  # 發生。只在 pull request 上跑的那幾個 job 在這裡不跑（它們的 if: 只認 pull_request）；ci_rollup.sh
+  # 對那一組允許 skipped，其餘每次都該跑的（含 acceptance、repo-rules）仍要 success。
   merge_group:
+  # 手動觸發只在 main 上算數（#407）：發版前用它在 main 的 commit 上留下 ci-rollup。在功能分支上手動
+  # 觸發仍看得到各 job 的結果，但 ci_rollup.sh 會讓 ci-rollup 失敗——必要檢查只認名稱，不分觸發。
   workflow_dispatch:
+
+# 同一個 PR 只留最新的一輪（#407，同 sim_asset）：改兩次描述時不會兩輪都去合併。這一層的取消可能停在
+# 舊那一輪 merge job 的半途（例如已經合併、還沒關 issue），那時照 AGENTS.md 重跑原本那一輪的 merge job
+# 補作業。不是 pull_request 的觸發各自一組，不互相取消。
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -120,9 +135,8 @@ jobs:
     # 位置與樣式，不印命中的內容（這裡的紀錄是公開的）。跑在映像之外，與 checkpoints 同一個理由：它要 gh
     # 讀 PR，容器裡沒有 token。
     #
-    # 已知缺口：上面的 pull_request 沒寫 types，只在 opened、synchronize、reopened 跑；在網頁上改 PR 標題
-    # 或描述不會重跑這個 job，原本的綠燈留在同一個 head 上。觸發條件由合併規則那張 issue（#407）補，
-    # 這裡不改，免得兩邊改同一處。
+    # 在網頁上改 PR 標題或描述會重跑這個 job：pull_request 的 types 有 edited（#407）。用 GITHUB_TOKEN
+    # 做的編輯不會，那由 merge job 合併前的重判補上。
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -373,24 +387,21 @@ jobs:
           if-no-files-found: error
 
   acceptance:
-    # 驗收報表跑在 main 上，不跑在每個 pull request 上。
+    # 驗收報表跑在每一個 pull request 上（#407，維護者 11/20 定案 2：「搬到 PR 上跑」），合併前全部驗完；
+    # merge job 合併之後 main 不再跑一輪（GITHUB_TOKEN 的合併不觸發 push），所以它不能只在 main 上跑。
+    # 當時量的：main run 44250363331 的 acceptance 85 秒，與其他 job 並行，整輪 2 分 46 秒，最慢的是
+    # compose-smoke 128 秒——搬過來不拉長一輪。
     #
-    # acceptance.sh 會把對照表指到的規格再跑一次，而那幾乎是整組規格——接成每個
-    # PR 的必要檢查，CI 時間翻倍換來的是同一批規格的第二個答案。它比 test.sh 那幾段多
-    # 出來的訊號只有一種：**對照表與規格之間的對應**（一條檢查點沒有人驗、一條
-    # 參照指到不存在的規格）。那個訊號只在對照表或規格名改動時才會變。
+    # 它比 test.sh 那幾段多出來的訊號是**對照表與規格之間的對應**（一條檢查點沒有人驗、一條參照指到
+    # 不存在的規格）。對照表指錯時 acceptance.sh 回 2，而 release.sh 對 2 的處置是不建立 release——
+    # 在 PR 上就擋下，不必等到打 tag 那天。
     #
-    # 但它不能等到打 tag 那天才出現：對照表指錯時 acceptance.sh 回 2，而
-    # release.sh 對 2 的處置是不建立 release——那時候發現，代價是一個發不出去的
-    # tag。跑在 main 上，最多晚一次合併就會知道。
+    # 跑的是對照表頂層 target 寫的目前目標版本，不在這裡寫死版號（#355）。目標版本已整體通過、對照表裡
+    # 之後還有版本時，acceptance.sh 以 2 結束並指名下一版：讓目標版本整體通過的那一次簽核，要和 target
+    # 推進放在同一個 PR（AGENTS.md 的 v0.9.0 收尾順序）。
     #
-    # 跑的是對照表頂層 target 寫的目前目標版本，不在這裡寫死版號（#355）：寫死的版號在那一版
-    # 完成之後會永遠報綠，而那與沒有這個 job 是同一件事（原本寫死 v0.1.0，就停在那裡）。
-    # 目標版本已整體通過、對照表裡之後還有版本時，acceptance.sh 以 2 結束並指名下一版。
-    #
-    # --gate automated：這個 job 抓的是自動檢查退步與對照表壞掉。人工檢查點要等真人，不讓
-    # main 一直是紅的；報表照樣印出人工待驗清單。發版（release.sh）用預設的 --gate overall。
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # --gate automated：自動檢查全過、沒有未涵蓋就過，人工檢查點要等真人，不擋 PR；報表照樣印出人工待驗
+    # 清單。發版（release.sh）用預設的 --gate overall，人工也要簽完。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -490,6 +501,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
-          --always "repo-rules run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
+          --always "repo-rules run-name lint unit-integration api bats web-e2e coverage acceptance build compose-smoke backup-drill"
           --pull-request "commit-message checkpoints test-interfaces single-task attribution merge-gate"
-          --main-push "acceptance"
+          --main-push ""
