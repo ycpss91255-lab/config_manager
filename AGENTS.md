@@ -150,7 +150,9 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 
 fork 的 PR：merge job 不處理 fork。網頁合併前，看這個 PR 最新的一輪、對應目前 head 的非草稿 pull_request 執行：checkpoints、
 single-task、merge-gate 與 `attribution` 在最新的 attempt 重新執行過而且通過、`ci-rollup` 是 `success`；再拿 checkpoints、
-single-task、merge-gate 印的識別和現況比對（同上），全部相同才合併。
+single-task、merge-gate、`attribution`、test-interfaces 各自印的識別（含 `attribution` 讀到的標題與描述的 sha256、single-task 與
+test-interfaces 讀到的其他 issue）和現況比對（同上），全部相同才合併。例如 `attribution` 讀到的是舊標題、之後標題被改、新的一輪
+還查不到時，識別對不上，停止。
 
 失敗原因記在對應的 issue；修正另開 issue（開 issue 前經 Codex 審過）。
 
