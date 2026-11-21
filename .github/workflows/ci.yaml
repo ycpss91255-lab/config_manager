@@ -156,6 +156,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./script/lint_merge_gate.sh "${{ github.event.pull_request.number }}" "origin/${{ github.base_ref }}"
 
+  repo-rules:
+    # repo 的保護設定由 CI 核對（#407，維護者定案 12）：讀 GitHub 上實際的 ruleset 與 repo 設定，和
+    # AGENTS.md 的「repo 保護設定」表逐項比，不一致或必驗項目讀不到就失敗。每次都跑：設定被改掉，
+    # 下一輪 CI 就紅。用 GITHUB_TOKEN、workflow 層的唯讀權限（這幾個端點文件都標為只要 Metadata 讀取權）。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./script/lint_repo_rules.sh AGENTS.md
+
   run-name:
     # workflow 的 run-name 分得出每一次執行對應的 commit（#350）。**獨立的 job、獨立的腳本**，不併進
     # lint（維護者 11/12、11/14）：本機的 pre-push hook（script/githook-checks/pre-push/10-run-name.sh）
@@ -457,6 +468,7 @@ jobs:
       - single-task
       - attribution
       - merge-gate
+      - repo-rules
       - run-name
       - lint
       - unit-integration
@@ -478,6 +490,6 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: >-
           ./script/ci_rollup.sh .github/workflows/ci.yaml
-          --always "run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
+          --always "repo-rules run-name lint unit-integration api bats web-e2e coverage build compose-smoke backup-drill"
           --pull-request "commit-message checkpoints test-interfaces single-task attribution merge-gate"
           --main-push "acceptance"

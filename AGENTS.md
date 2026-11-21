@@ -60,6 +60,46 @@
   #339 可選的請求紀錄。維護者決定不補開 issue，這個流程差異留在這裡。）
 - **決策要寫回它被提出的地方。** 討論定案後，把決策、佐證、以及被否決的選項與理由寫回該 issue 或 PR，不要只留在對話裡。關閉帶驗收條件的 issue 時，**證據附在 issue 上，勾選框實際勾起來**。
 
+## 合併規則（#407）
+
+### repo 保護設定
+
+CI 的 `repo-rules` job（`script/lint_repo_rules.sh`）每一輪都讀 GitHub 上的實際設定，和這張表逐項比對，表上寫的與實際讀到的都印出來，
+有一項不一致或讀不到就失敗（`repo` 那一列讀不到時例外：不失敗，印出「未自動核對：allow_merge_commit，以設定頁人工核對為準」）。
+**改 repo 的保護設定，要在同一個 PR 改這張表。** 表的格式是固定的，腳本照它讀：每一列是對象（`repo`，或 `ruleset <名稱>`）、
+項目與設定值（反引號包住的 JSON），規則的種類兩個方向都比，表上沒列的參數欄位不比、只印出來；細節見 `script/lint_repo_rules.sh --help`。
+
+| 對象 | 項目 | 設定值 |
+|---|---|---|
+| repo | `allow_merge_commit` | `true` |
+| ruleset main | `target` | `"branch"` |
+| ruleset main | `enforcement` | `"active"` |
+| ruleset main | `conditions.ref_name.include` | `["~DEFAULT_BRANCH"]` |
+| ruleset main | `conditions.ref_name.exclude` | `[]` |
+| ruleset main | `rules` | `["deletion", "non_fast_forward", "pull_request", "required_status_checks"]` |
+| ruleset main | `pull_request.required_approving_review_count` | `0` |
+| ruleset main | `pull_request.required_review_thread_resolution` | `true` |
+| ruleset main | `pull_request.allowed_merge_methods` | `["merge"]` |
+| ruleset main | `required_status_checks.required_status_checks` | `[{"context": "ci-rollup", "integration_id": 15368}]` |
+| ruleset main | `required_status_checks.strict_required_status_checks_policy` | `true` |
+| ruleset main | `required_status_checks.do_not_enforce_on_create` | `false` |
+| ruleset Require CI for release tags | `target` | `"tag"` |
+| ruleset Require CI for release tags | `enforcement` | `"active"` |
+| ruleset Require CI for release tags | `conditions.ref_name.include` | `["refs/tags/v*"]` |
+| ruleset Require CI for release tags | `conditions.ref_name.exclude` | `[]` |
+| ruleset Require CI for release tags | `rules` | `["deletion", "non_fast_forward", "required_status_checks"]` |
+| ruleset Require CI for release tags | `required_status_checks.required_status_checks` | `[{"context": "ci-rollup", "integration_id": 15368}]` |
+| ruleset Require CI for release tags | `required_status_checks.do_not_enforce_on_create` | `false` |
+
+**核對不了**（`repo-rules` 不比，也不因此算通過）：
+
+- **誰可以繞過**（bypass 名單）：文件寫明 `bypass_actors` 只在呼叫者對那個 ruleset 有寫入權時才回傳。`repo-rules` 每一輪對每個 ruleset
+  印一行「核對不了」，回應裡有這個欄位就把內容也印出來；由維護者在設定頁核對。本 repo 的 `GITHUB_TOKEN` 實際回什麼沒有實測。
+- **Actions 的「Workflow permissions」**：我們讀是 403。
+- **只在 CI 跑的時候才會發現**：設定被改掉、又沒有人開 PR 或手動觸發 CI，就不會發現。
+- **`GITHUB_TOKEN` 讀不讀得到 rulesets**：這幾個端點文件都標為只要 Metadata 讀取權；只有讀取權的使用者帳號實測讀得到
+  （2026-11-20，base、cli/cli），`GITHUB_TOKEN` 沒實測，由 #407 的 PR 第一輪實測。讀不到就是必驗項目讀不到，`repo-rules` 失敗。
+
 ## Commit 訊息
 
 格式沿用 base 的慣例，由 `script/lint_commit.sh` 檢查（ADR-00000025、ADR-00000028）。自查：`./script/test.sh --lint commit`。
