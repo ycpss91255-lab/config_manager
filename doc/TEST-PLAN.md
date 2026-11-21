@@ -1723,6 +1723,9 @@ PR 描述沒有關閉關鍵字、或綁定判定沒過時**失敗**，指名 PR 
 「都完成後才 `gh pr ready`」（草稿可以先開）。每一次執行印出讀到的識別：PR 的 `updatedAt` 與描述的 sha256、issue 的編號與
 `updatedAt`。
 
+**（#407）`lint_test_interfaces.sh agreed` 每一次讀 issue 都印出讀到的識別**：哪一個新介面回指哪一張 issue，以及那張
+issue 的 `createdAt`。merge job 的重判與 fork 的網頁合併前拿它和現況比對（`AGENTS.md` 的網頁合併程序）。
+
 **`script/acceptance.sh` 被觀察的不是任何一條驗收檢查點，而是「這份報表會不會說謊」**
 （#148）。它讀 `doc/acceptance-checkpoints.toml`——設計 §8.2 的檢查點與規格之間的
 對照表——逐條**實際執行**對應的規格，印出每條檢查點的判定。它與其餘守門腳本同屬
@@ -1975,6 +1978,7 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 | `pr`：commit、標題、描述都沒有命中 | 以 0 結束 |
 | `pr`：失敗時的輸出 | 只有位置與樣式：命中的共同作者行與完整的 session 網址都不在輸出裡 |
 | `pr`：讀不到 PR | 非零結束，不放行 |
+| `pr`：每一次執行（#407） | 印出讀到的識別：PR 標題與描述各自的 sha256（只印雜湊，不印內容）——merge job 的重判與 fork 的網頁合併前拿它和現況比對 |
 | 登記的 commit-msg 檢查，訊息檔含任一條樣式 | 非零結束 |
 | 登記的 commit-msg 檢查，乾淨的訊息檔 | 以 0 結束 |
 | 三個呼叫端各自換上一份改過的樣式清單（複製一份樹） | 都照改過的那份判定：讀的是同一個 `script/attribution-patterns.txt` |
