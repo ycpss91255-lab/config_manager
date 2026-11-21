@@ -159,6 +159,12 @@ jobs:
   #
   # fetch-depth: 0 每一段都給：原本那一次是在完整歷史上跑的（lint_commit 要讀歷史），
   # 拆開之後每一段的輸入不該比原本少。
+  #
+  # **跑規格的四段（unit-integration、api、bats、web-e2e）拆成 prepare 與 specs 兩步**（#407）：
+  # prepare 以 `test.sh --prepare` 建映像，specs 以 CM_TEST_IMAGE_PREBUILT=1 用建好的映像跑規格。
+  # merge-gate 認 TDD red 時只認「specs 這一步失敗、紀錄裡有規格層級的失敗」，所以映像沒建起來
+  # 與規格紅了分得開。步驟名稱 prepare、specs 是 merge-gate 讀的介面，改名要一起改
+  # script/lint_merge_gate.sh。
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -183,9 +189,15 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
       - run: ./script/ci_key.sh --github-env
-      - run: ./script/test.sh --part fast
+      - name: prepare
+        run: ./script/test.sh --prepare
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
+      - name: specs
+        run: ./script/test.sh --part fast
+        env:
+          CM_TEST_IMAGE_PREBUILT: "1"
           CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
       - uses: actions/upload-artifact@v7
         with:
@@ -216,9 +228,15 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
       - run: ./script/ci_key.sh --github-env
-      - run: ./script/test.sh --part api "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
+      - name: prepare
+        run: ./script/test.sh --prepare
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
+      - name: specs
+        run: ./script/test.sh --part api "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
+        env:
+          CM_TEST_IMAGE_PREBUILT: "1"
           CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOB_TOTAL: ${{ strategy.job-total }}
@@ -238,9 +256,15 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
       - run: ./script/ci_key.sh --github-env
-      - run: ./script/test.sh --part bats
+      - name: prepare
+        run: ./script/test.sh --prepare
         env:
           CM_TEST_IMAGE_CACHE: gha-write
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
+      - name: specs
+        run: ./script/test.sh --part bats
+        env:
+          CM_TEST_IMAGE_PREBUILT: "1"
           CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
 
   web-e2e:
@@ -261,9 +285,15 @@ jobs:
       - uses: docker/setup-buildx-action@v4
       - uses: crazy-max/ghaction-github-runtime@v4
       - run: ./script/ci_key.sh --github-env
-      - run: ./script/test.sh --part web "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
+      - name: prepare
+        run: ./script/test.sh --prepare
         env:
           CM_TEST_IMAGE_CACHE: gha
+          CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
+      - name: specs
+        run: ./script/test.sh --part web "$(( JOB_INDEX + 1 ))/${JOB_TOTAL}"
+        env:
+          CM_TEST_IMAGE_PREBUILT: "1"
           CM_TEST_IMAGE_TAG: ${{ env.CM_CI_KEY }}
           JOB_INDEX: ${{ strategy.job-index }}
           JOB_TOTAL: ${{ strategy.job-total }}
