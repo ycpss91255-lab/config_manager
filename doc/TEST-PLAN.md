@@ -1985,7 +1985,7 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 - 網頁上直接寫的內容；cloud 工作階段、`disableAllHooks`；優先順序較高的設定蓋掉 `attribution`（hook 與 CI 仍會擋）。
 - `sessionUrl` 在本機驗證不了：它管的是 cloud 或 Remote Control 工作階段加的 session 連結。
 - `--no-verify` 跳過的是 git 的 commit-msg 檢查（Claude Code 的 hook 另外擋這個旗標；CI 仍會擋 PR 裡的 commit）。
-- 在網頁上改 PR 標題或描述之後，`ci.yaml` 的 `pull_request` 沒有 `edited`，`attribution` 不會重跑，原本的綠燈留在同一個 head 上（#407 補觸發條件）。
+- 用 GITHUB_TOKEN 改 PR 標題或描述之後不會產生新的一輪（〈GITHUB_TOKEN〉）；使用者或 agent 帳號改的會：`pull_request` 有 `edited`（#407）。
 - `run-name` 把 PR 標題印進 workflow 的執行名稱：標題含完整網址時，它仍會出現在執行名稱裡。這支只管自己的輸出。
 - 樣式以外的寫法，例如沒從行首開始的共同作者行。
 - hook 只看指令文字本身：經腳本檔、git 或 gh 的別名、指令名稱來自變數這類方式執行的寫入看不到；同一條指令裡用重新導向與 `tee`
