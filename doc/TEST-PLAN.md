@@ -2132,7 +2132,7 @@ single-task、test-interfaces、merge-gate、`attribution`）在**同一份現�
 | 綁定的計數：`Closes #1` 與 `Closes #2`；`Closes #12` 與 `Closes other/repo#12`；只有 `Closes other/repo#12`；只有 `Discloses #12`；關鍵字後面接網址 | 以 2 結束 |
 | `Closes #12` 與 `Closes o/r#12`（同一張，不分大小寫）；`-R x/y` 與 `Closes x/y#12`；`Closes: #12` | 以 0 結束 |
 | `cwd` 不在 git repo 裡（判斷不了本 repo）：寫了 `owner/repo` 的參照 | 以 2 結束；只寫 `#N` 的照樣判定 |
-| 換上一份只認 `Refs` 的擷取規格（複製一份樹） | 照那一份判定：`Refs #12` 以 0 結束；`script/claude-hooks/` 底下沒有第二份關閉關鍵字的樣式 |
+| 換上一份只認 `Refs` 的擷取規格（複製一份樹） | 照那一份判定：`Refs #12` 以 0 結束；`script/` 底下寫著 `close[sd]` 的只有 `script/closing-references.txt`（沒有第二份樣式） |
 | `gh pr create` 沒寫草稿旗標、寫 `--draft=false` | 以 2 結束，下一步寫「加 --draft 開草稿；帳本勾完、TDD red 與驗證結果寫進 PR 之後再 gh pr ready <n>」 |
 | `gh pr create --draft …`、`gh pr create -d …`（描述有關閉關鍵字），署名 hook 同時啟用時 | 兩支都以 0 結束 |
 | 讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構、PATH 上沒有 python3 | 以 2 結束並寫出下一步 |

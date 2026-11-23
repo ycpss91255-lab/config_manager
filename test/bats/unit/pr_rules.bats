@@ -498,10 +498,11 @@ body() {
   [ "${status}" -eq 0 ]
 }
 
-@test "hook 裡沒有第二份關閉關鍵字的樣式：script/claude-hooks 底下找不到 close[sd]、resolve[sd] 這類寫法" {
-  run grep -rn -E 'close\[sd\]|resolve\[sd\]|resolve\(s\|d\)' "${REPO_ROOT}/script/claude-hooks"
+@test "沒有第二份關閉關鍵字的樣式：script 底下寫著 close[sd] 的只有 script/closing-references.txt" {
+  run grep -rlF 'close[sd]' "${REPO_ROOT}/script"
 
-  [ "${status}" -eq 1 ]
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${REPO_ROOT}/script/closing-references.txt" ]
 }
 
 # ── 第 3 點：一律先開草稿 PR ───────────────────────────────────────────────
