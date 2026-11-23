@@ -2331,6 +2331,7 @@ PostToolUseFailure，或 `tool_response` 是錯誤文字的字串。被觀察的
 | `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/shell-parse.sh` | T19（Claude Code hook 共用的指令解析與 gh 旗標清單，由署名 hook、PR 規則 hook 與轉成可合併的提醒載入，#408） | 已落地（由載入它的 hook 執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/pr-rules.sh` | T19（Claude Code 的 PreToolUse hook：agent 不合併、PR 描述要綁一張本 repo 的 issue、一律先開草稿，#408） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/pr-ready-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：PR 轉成可合併時提醒檢查全過會被 CI 合併，#408） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
 | `script/lint_merge_gate.sh` | T19（合併前的 TDD red 與 milestone 順序，#407） | 已落地（CI 的 `merge-gate` job 與 merge job 的重判執行，不由 `test.sh --lint` 執行） |
