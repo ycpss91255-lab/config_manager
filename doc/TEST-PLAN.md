@@ -1939,7 +1939,7 @@ CI 的 `attribution` job（`script/lint_attribution.sh pr`）。
 **`script/claude-hooks/no-attribution.sh`** 由 `.claude/settings.json` 以 PreToolUse、matcher `Bash` 掛上，在主機上跑，只讀工具呼叫的
 輸入：標準輸入那份 JSON 裡的指令文字與 `cwd`，以及指令帶入的檔；不跑專案程式（#405 的 Q1）。它檢查 `git commit`、
 `gh pr|issue create|edit|comment`、`gh release create|edit` 與會寫入的 `gh api`：**先取出要寫出去的文字，再逐行比對**，不拿整條指令去比。
-看不到該看的文字時擋下並寫出下一步，不默默放行（Q8）。規格把 hook 會收到的 JSON 餵進標準輸入，看結束碼與訊息。被觀察的行為：
+看不到該看的文字時擋下並寫出下一步，不默默放行（Q8）。讀指令的那一段與 gh 的旗標清單在 `script/claude-hooks/shell-parse.sh`，和 PR 規則 hook 共用（#408）。規格把 hook 會收到的 JSON 餵進標準輸入，看結束碼與訊息。被觀察的行為：
 
 | 行為 | 通過條件 |
 |---|---|
@@ -1952,7 +1952,7 @@ CI 的 `attribution` job（`script/lint_attribution.sh pr`）。
 | 只在行中引用 `Co-Authored-By`、`Generated with` 字樣，session 網址寫成 `session_<ID>`（含直接寫在 `--body` 參數裡的） | 以 0 結束 |
 | `gh issue create --title t --body-file f`，f 是 #269、#405 的內文（`test/fixtures/attribution/`，11/21 的快照） | 以 0 結束 |
 | `git log --grep Co-Authored-By`、`gh pr view`、只讀的 `gh api` | 以 0 結束 |
-| 清單外的旗標：`gh pr edit 12 --attach a.png`、`gh pr edit 12 --body-file f --attach a.png`（f 乾淨） | 以 2 結束；訊息指名 `--attach`，下一步寫附件在網頁上加、或把附件網址寫進 `--body-file` 的內文 |
+| 清單外的旗標：`gh pr edit 12 --attach a.png`、`gh pr edit 12 --body-file f --attach a.png`（f 乾淨） | 以 2 結束；訊息指名 `--attach`，下一步寫「附件在網頁上加，或把附件的網址直接寫進 --body-file 的內文；描述一律用 --body-file 送出」（和 PR 規則 hook 一字不差，#408） |
 | 讀不到 hook 輸入（空的、不是 JSON、沒有指令文字） | 以 2 結束並寫出下一步 |
 | `--body-file` 指的檔不存在 | 以 2 結束並寫出下一步 |
 | 從標準輸入讀：`gh api -F body=@-`、`gh api --input -`、`gh issue create --title t --body-file -`、`git commit -F -` | 各以 2 結束 |
@@ -2329,6 +2329,7 @@ PostToolUseFailure，或 `tool_response` 是錯誤文字的字串。被觀察的
 | `script/lint_single_task.sh` | T19（標題任務編號限制，#351） | 已落地（CI 的 `single-task` job 與本機 commit-msg／pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_agents_link.sh` | T19（規範正本 `AGENTS.md` 與指向它的 `CLAUDE.md` symlink，git 樹與工作樹分開檢查，#404） | 已落地 |
 | `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/shell-parse.sh` | T19（Claude Code hook 共用的指令解析與 gh 旗標清單，由署名 hook、PR 規則 hook 與轉成可合併的提醒載入，#408） | 已落地（由載入它的 hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
 | `script/lint_merge_gate.sh` | T19（合併前的 TDD red 與 milestone 順序，#407） | 已落地（CI 的 `merge-gate` job 與 merge job 的重判執行，不由 `test.sh --lint` 執行） |
