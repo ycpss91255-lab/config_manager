@@ -8,7 +8,7 @@
 #
 # 假 gh 只認 `gh api <path>`：回 ${WORK}/api/<path>.json；同一個 path 有 .fail 檔時，把那個檔的內容
 # 印到 fd 2 並以 1 結束（模擬 403、404）；兩個都沒有也以 1 結束。替身回應照 2026-11-20 從
-# ycpss91255-docker/base 讀到的形狀：pull_request 帶表上沒列的預設參數，deletion、non_fast_forward
+# ycpss91255-lab/base（改名前是 ycpss91255-docker/base）讀到的形狀：pull_request 帶表上沒列的預設參數，deletion、non_fast_forward
 # 沒有 parameters，rules/branches/main 的每一條帶 ruleset_id。
 #
 # setup 寫一份「一致」的基準；每條失敗的規格只改一處，看那一項被指名。

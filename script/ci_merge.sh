@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # merge job 的腳本（#407 調整需求第 1 點）：檢查全過，由 CI 以 merge commit 合併，只關判定出來的那一張
-# issue。照 ycpss91255-docker/sim_asset 的 merge job（維護者 11/20 定案 1、3）；CI 的 merge job 排在
+# issue。照 ycpss91255-lab/sim_asset 的 merge job（維護者 11/20 定案 1、3）；CI 的 merge job 排在
 # ci-rollup 之後、只在同 repo、base 是 main、不是草稿的 pull_request 上執行它。
 #
 # ## 合併前在同一份現況資料上重判（a0、a）

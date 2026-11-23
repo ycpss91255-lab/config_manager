@@ -506,7 +506,7 @@ jobs:
           --main-push ""
 
   merge:
-    # 檢查全過，由 CI 以 merge commit 合併（#407，照 ycpss91255-docker/sim_asset；維護者 11/20 定案 1、3）。
+    # 檢查全過，由 CI 以 merge commit 合併（#407，照 ycpss91255-lab/sim_asset；維護者 11/20 定案 1、3）。
     # 排在 ci-rollup 之後，不列進它的 needs（ci_rollup.sh 放過排在它之後的 job）。merge-gate、acceptance、
     # attribution 都經 ci-rollup 等到，不另外列。
     #

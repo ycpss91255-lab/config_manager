@@ -1998,7 +1998,7 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 - 既有的舊內容：說明裡的署名另案處理，git 歷史不改。
 
 **合併規則的守門腳本**（#407）。維護者 11/20 定案：檢查全過由 CI 的 merge job 以 merge commit 合併（照
-`ycpss91255-docker/sim_asset`），每個 PR 都用關閉關鍵字綁一張 issue，合併前要有這個 PR 自己的 TDD red，前面的 milestone
+`ycpss91255-lab/sim_asset`），每個 PR 都用關閉關鍵字綁一張 issue，合併前要有這個 PR 自己的 TDD red，前面的 milestone
 沒關、後面的不合併，repo 的保護設定由 CI 核對。下面四支與其餘守門腳本同屬 T19，觀察位置相同：命令列、一組受控的 `PATH`
 （假 `gh`）與環境變數進去，結束碼與訊息出來。假 `gh` 回的是替身的 PR、issue、milestone、執行紀錄與 ruleset，規格不連網。
 

@@ -101,7 +101,7 @@ main() {
   fi
   if [[ ! "${repo}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
     printf 'lint_repo_rules: GITHUB_REPOSITORY 是「%s」，不是 <owner>/<repo> 的形式\n' "${repo}" >&2
-    printf 'lint_repo_rules: 下一步：設成 <owner>/<repo>，例如 ycpss91255-research/config_manager\n' >&2
+    printf 'lint_repo_rules: 下一步：設成 <owner>/<repo>，例如 ycpss91255-lab/config_manager\n' >&2
     return 2
   fi
   if ! command -v python3 >/dev/null 2>&1; then

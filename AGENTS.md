@@ -63,7 +63,7 @@
 
 ## 合併規則（#407）
 
-維護者 2026-11-20 定案：檢查全過，由 CI 的 `merge` job 以 merge commit 合併（照 `ycpss91255-docker/sim_asset`，不用
+維護者 2026-11-20 定案：檢查全過，由 CI 的 `merge` job 以 merge commit 合併（照 `ycpss91255-lab/sim_asset`，不用
 merge queue、不用 auto-merge）。流程是：開 issue → 新分支 → 本機測試 → 推到分支跑 CI → 開草稿 PR → `gh pr ready` 時
 跑完整的 CI 驗證（含 acceptance），全過由 merge job 合併。**agent 不自己合併**（定案 16）。
 
