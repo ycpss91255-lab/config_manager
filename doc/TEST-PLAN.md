@@ -1394,6 +1394,8 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
 | `script/lint_agents_link.sh`（#404） | `test/bats/unit/lint_agents_link.bats` |
 | `script/claude-hooks/no-attribution.sh`、`.claude/settings.json` 的 `attribution` 與 PreToolUse 接線（#405） | `test/bats/unit/no_attribution.bats` |
+| `script/claude-hooks/pr-rules.sh`、`script/claude-hooks/shell-parse.sh`（和署名 hook 共用的指令解析與旗標清單）、`.claude/settings.json` 的 PreToolUse 接線（#408） | `test/bats/unit/pr_rules.bats` |
+| `script/claude-hooks/pr-ready-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#408） | `test/bats/unit/pr_ready_reminder.bats` |
 | `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
 | `script/pr_binding.sh`、`script/closing-references.txt`（#407：共用的綁定判定與唯一一份關閉參照的擷取規格） | `test/bats/unit/pr_binding.bats` |
 | `script/lint_merge_gate.sh`、`ci.yaml` 的 `merge-gate` job 在 `ci-rollup` 的分組（#407） | `test/bats/unit/lint_merge_gate.bats` |
@@ -2097,6 +2099,70 @@ single-task、test-interfaces、merge-gate、`attribution`）在**同一份現�
 
 **它擋不住的**：重判之後、送出合併之前的時間差裡改描述或轉回草稿（`--match-head-commit` 只鎖 head）；合併之後、關 issue
 之前被取消（要重跑原本那一輪的 merge job 補作業）；一個 PR 改掉自己的守門程式讓自己通過（信任有 push 權限的人，#407 查證 A）。
+
+**合併規則的 Claude Code hook**（#408）。合併由 CI 的 merge job 執行（#407），agent 不合併；這兩支 hook 在本機提早擋、給清楚的
+下一步，真正擋的仍是 CI 與 ruleset。與署名 hook 一樣由 `.claude/settings.json` 掛上、在主機上跑，只讀工具呼叫的輸入（#408 的 Q1）：
+標準輸入那份 JSON 裡的工具名稱、指令文字與 `cwd`，以及指令帶入的檔；不跑專案程式，也不連網。讀 shell 指令的那一段（字、引號、
+指令替換、`&&`／`;`、`bash -c`、`eval`、`cd`）與 `gh pr create|edit` 認得的旗標清單，和署名 hook 共用同一份
+`script/claude-hooks/shell-parse.sh`（#408 第 2 點「旗標只認和〔B〕相同的清單」）。規格把 hook 會收到的 JSON 餵進標準輸入，看結束碼
+與訊息（或輸出的 JSON）。
+
+**`script/claude-hooks/pr-rules.sh`**（PreToolUse，matcher `Bash` 與 `mcp__ccd_pr__set_auto_merge`）被觀察的是「這個工具呼叫會不會
+由 agent 合併 PR、開出或改出沒綁 issue 的 PR 描述、開出不是草稿的 PR」。關閉參照照 `script/closing-references.txt`（只有那一份）
+解析出完整身分（repo＋編號）再計數；`#N` 算本 repo，本 repo 是 `-R` 寫的 repo，沒寫就是 `cwd` 那個簽出的 git 設定裡 `origin`
+（或 `gh repo set-default` 選的那個 remote）指到的 repo。規格的 `cwd` 是一個 origin 指到替身 `o/r` 的 git repo。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `gh pr merge 12`，帶 `--merge`、`--auto`、`--admin --squash`、`--disable-auto` 任何參數 | 以 2 結束，下一步寫「合併由 CI 的 merge job 執行，檢查全過會自己合併；卡住就查 merge job 的紀錄並回報，不要自己合併」 |
+| `gh pr merge` 放在 `&&` 後面、`bash -c` 裡、交給 `xargs` 執行、`-R` 寫在子指令前面 | 以 2 結束 |
+| commit 訊息裡提到 `gh pr merge` | 以 0 結束（那不是 gh 指令） |
+| `gh api` 寫入 `pulls/<n>/merge`：`-X PUT`、`--method PUT` 加完整網址、沒寫 `-X` 但帶欄位（隱含 POST） | 以 2 結束並寫出同一個下一步 |
+| 讀取 `pulls/<n>/merge`（GET） | 以 0 結束 |
+| `gh api graphql` 的有效查詢含 `mergePullRequest`、`enablePullRequestAutoMerge`、`enqueuePullRequest`：`-f query=`、`--field query=`、`-F query=@<檔>`、`--input <檔>` 的 `query` | 以 2 結束並寫出同一個下一步 |
+| 取不到有效查詢：`--input -`、`-F query=@-`、值是 shell 變數或指令替換、讀不到檔、JSON 無法解析、JSON 裡沒有字串的 `query` | 以 2 結束，下一步寫「把查詢寫在 -f query= 或檔案裡」 |
+| 只讀的 `gh api graphql` 查詢、`gh pr view 12`、`gh pr checks 12`、`gh run rerun <run> --failed` | 以 0 結束 |
+| 工具名稱是 `mcp__ccd_pr__set_auto_merge`（輸入是開、是關、是空的都一樣） | 以 2 結束並寫出同一個下一步 |
+| `gh pr create --draft --title t --body-file f`、`gh pr edit 12 --body-file f`、`gh pr edit 12 --body …`：描述沒有關閉關鍵字 | 以 2 結束，下一步寫「先開審過的 issue，再在描述寫 Closes #N」 |
+| 同上，描述有 `Closes #12` | 以 0 結束 |
+| 沒改描述的 `gh pr edit`（只改標籤） | 以 0 結束 |
+| 看不到描述：`gh pr create --draft --fill`、沒帶描述的 `gh pr create`、沒有任何旗標的 `gh pr edit` | 以 2 結束，下一步寫「改用 --body-file」 |
+| `gh pr edit 12 --attach a.png`、`gh pr edit 12 --body-file f --attach a.png`（f 有關閉關鍵字） | 以 2 結束，下一步寫「附件在網頁上加，或把附件的網址直接寫進 --body-file 的內文；描述一律用 --body-file 送出」；署名 hook 對同一條指令寫的下一步一字不差 |
+| 清單外的旗標（`-e`）、描述來自 shell 變數、`--body-file -`、`--body-file` 指的檔不存在 | 以 2 結束 |
+| 綁定的計數：`Closes #1` 與 `Closes #2`；`Closes #12` 與 `Closes other/repo#12`；只有 `Closes other/repo#12`；只有 `Discloses #12`；關鍵字後面接網址 | 以 2 結束 |
+| `Closes #12` 與 `Closes o/r#12`（同一張，不分大小寫）；`-R x/y` 與 `Closes x/y#12`；`Closes: #12` | 以 0 結束 |
+| `cwd` 不在 git repo 裡（判斷不了本 repo）：寫了 `owner/repo` 的參照 | 以 2 結束；只寫 `#N` 的照樣判定 |
+| 換上一份只認 `Refs` 的擷取規格（複製一份樹） | 照那一份判定：`Refs #12` 以 0 結束；`script/claude-hooks/` 底下沒有第二份關閉關鍵字的樣式 |
+| `gh pr create` 沒寫草稿旗標、寫 `--draft=false` | 以 2 結束，下一步寫「加 --draft 開草稿；帳本勾完、TDD red 與驗證結果寫進 PR 之後再 gh pr ready <n>」 |
+| `gh pr create --draft …`、`gh pr create -d …`（描述有關閉關鍵字），署名 hook 同時啟用時 | 兩支都以 0 結束 |
+| 讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構、PATH 上沒有 python3 | 以 2 結束並寫出下一步 |
+| 沒有 gh 的指令 | 以 0 結束 |
+| `.claude/settings.json` | PreToolUse 有 matcher `Bash` 與 `mcp__ccd_pr__set_auto_merge` 兩項呼叫這支腳本 |
+
+**`script/claude-hooks/pr-ready-reminder.sh`**（PostToolUse 與 PostToolUseFailure，matcher `Bash`）被觀察的是「PR 轉成可合併之後，
+Claude 有沒有收到『檢查全過就會被合併』的提醒」。依 hooks 文件，結束碼 0 時寫到 stderr 的內容 Claude 看不到，所以提醒寫成 stdout 上
+一份 JSON 的 `hookSpecificOutput.additionalContext`。成功的呼叫是 PostToolUse、`tool_response` 是物件而且沒有被中斷；失敗是
+PostToolUseFailure，或 `tool_response` 是錯誤文字的字串。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 只有一段、沒帶 `--undo` 的 `gh pr ready 12`，呼叫成功 | 以 0 結束，`additionalContext` 寫明：符合合併條件（同 repo 的分支、base 是 main、合併前重判通過）時 PR #12 檢查全過就會被 CI 的 merge job 以 merge commit 合併、Closes 的 issue 會被關掉、之後每一次推送都可能觸發合併；`ready_for_review` 會觸發 CI，排隊與結果由 GitHub 決定；還沒驗完就用 `gh pr ready 12 --undo` 轉回草稿、不一定趕得上；固定提醒「確認描述有 ## TDD red（或純文件的不適用理由）」並寫明 hook 沒有讀描述 |
+| 沒寫編號的 `gh pr ready` | 同上，指的是「這個分支的 PR」 |
+| `gh pr ready 12 --undo`、`gh pr create --draft`、和 `gh pr ready` 無關的指令 | 以 0 結束，沒有輸出 |
+| 只有一段的 `gh pr ready 12` 失敗（PostToolUseFailure、`tool_response` 是字串、被中斷） | 以 0 結束，沒有輸出 |
+| 用 `&&`、`;` 串起來的多段指令裡有 `gh pr ready`（成功或失敗都一樣：分不出是哪一段） | 條件式的提醒「如果剛才的指令把 PR 轉成可合併了，……」，不說成已經轉了；`hookEventName` 照收到的事件 |
+| 讀不懂 hook 的輸入；PATH 上沒有 python3 而輸入提到 `gh pr ready` | 以 2 結束（Claude 看得到 stderr），寫出判斷不了與下一步；沒有 python3 而輸入和它無關時以 0 結束 |
+| `.claude/settings.json` | PostToolUse 與 PostToolUseFailure 各有一項 matcher `Bash` 呼叫這支腳本 |
+
+**它擋不住的**（這兩支合起來）：
+- 推送本身：PR 不是草稿時，推上去、檢查全過就會被合併。hook 不連網，不知道這個分支有沒有開著的 PR，所以只在轉成可合併時提醒。
+- 網頁上的合併與開 PR（要靠 CI 與 ruleset）、其他工具、Codex、cloud 工作階段、`disableAllHooks`；別的用戶端沒有
+  `mcp__ccd_pr__set_auto_merge` 這個名稱、或名稱不同時（matcher 是確切的名稱）。
+- 用 API 改 PR 描述（`gh api` 的 PATCH）：描述的綁定只看 `gh pr create`、`gh pr edit`，其餘由 CI 的綁定判定擋。
+- hook 只看指令文字本身：經腳本檔、gh 的別名、指令名稱來自變數這類方式執行的看不到；`gh api graphql` 的
+  `markPullRequestReadyForReview` 這類轉成可合併的其他寫法不提醒。
+- 本 repo 的身分讀的是本機簽出的 remote：remote 還指著改名前的 repo 時，hook 和 CI（`GITHUB_REPOSITORY`）認的本 repo 會不同，以 CI 為準。
+- 提醒之後有沒有照做；merge job 失敗、issue 沒被關（發生在 GitHub 上）。
 
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
