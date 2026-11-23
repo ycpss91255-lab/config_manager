@@ -220,11 +220,13 @@ CI 的 `repo-rules` job（`script/lint_repo_rules.sh`）每一輪都讀 GitHub �
 **核對不了**（`repo-rules` 不比，也不因此算通過）：
 
 - **誰可以繞過**（bypass 名單）：文件寫明 `bypass_actors` 只在呼叫者對那個 ruleset 有寫入權時才回傳。`repo-rules` 每一輪對每個 ruleset
-  印一行「核對不了」，回應裡有這個欄位就把內容也印出來；由維護者在設定頁核對。本 repo 的 `GITHUB_TOKEN` 實際回什麼沒有實測。
+  印一行「核對不了」，回應裡有這個欄位就把內容也印出來；由維護者在設定頁核對。實測（2026-11-23，PR #417 的 run 45122748820）：
+  本 repo 的 `GITHUB_TOKEN` 讀兩個 ruleset 的詳情，回應裡都沒有 `bypass_actors`。
 - **Actions 的「Workflow permissions」**：我們讀是 403。
 - **只在 CI 跑的時候才會發現**：設定被改掉、又沒有人開 PR 或手動觸發 CI，就不會發現。
-- **`GITHUB_TOKEN` 讀不讀得到 rulesets**：這幾個端點文件都標為只要 Metadata 讀取權；只有讀取權的使用者帳號實測讀得到
-  （2026-11-20，base、cli/cli），`GITHUB_TOKEN` 沒實測，由 #407 的 PR 第一輪實測。讀不到就是必驗項目讀不到，`repo-rules` 失敗。
+- **`GITHUB_TOKEN` 讀得到什麼**（實測，2026-11-23，PR #417 的 run 45122748820）：`rulesets` 列表、每個 ruleset 的詳情與
+  `rules/branches/main` 都讀得到，25 項必驗項目都比得到；`repos/<repo>` 的回應裡**沒有** `allow_merge_commit`，所以那一列每一輪都印
+  「未自動核對」，以設定頁為準（切換時，2026-11-22，有 admin 權限的帳號經 API 讀到 `true`，紀錄在 #407 的留言）。之後讀不到必驗項目，就是 `repo-rules` 失敗。
 
 ## Commit 訊息
 
