@@ -29,7 +29,7 @@ manual = true
 [milestone.checkpoint.signoff]
 by = '姓名 <email>'
 date = 2026-12-01
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123#issuecomment-456'
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123#issuecomment-456'
 summary = '誰、在什麼環境、照什麼步驟做了什麼，結果如何'
 ```
 
