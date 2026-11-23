@@ -327,6 +327,29 @@ body() {
   [ "${status}" -eq 2 ]
 }
 
+@test "git -C 子目錄 commit -F 讀的是那個子目錄裡的檔" {
+  mkdir "${WORK}/sub"
+  body m.txt "乾淨的訊息"
+  body sub/m.txt "訊息${NL}${COAUTHOR}"
+
+  hook "git -C sub commit -F m.txt"
+
+  [ "${status}" -eq 2 ]
+}
+
+@test "git -c 寫在 commit 前面時以 2 擋下並指名 -c" {
+  hook "git -c core.hooksPath=/dev/null commit -m ok"
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"git -c"* ]]
+}
+
+@test "交給 xargs 執行的 git commit 以 2 擋下" {
+  hook "echo x | xargs git commit"
+
+  [ "${status}" -eq 2 ]
+}
+
 @test "PATH 上沒有 python3 時以 2 擋下並寫出下一步" {
   mkdir "${WORK}/nopy"
   hook "gh pr view 12"

@@ -14,6 +14,7 @@
 #   command_words         拿掉變數設定、if／!／time 這類前綴與 env、command、nohup 這類包裝，留下真正執行的字
 #   parse_options         依旗標清單把參數分成旗標、值與位置參數，清單外的旗標另外列出
 #   read_file             讀指令帶入的檔，讀不到就記下原因與下一步
+#   git_parts             git 的全域選項（-C、-c…）、子指令與其餘參數（署名 hook 與推送 hook 共用，#409）
 #   gh_parts              gh 的群組、子指令與其餘參數
 #   GH_*、API_*           gh pr|issue|release 與 gh api 認得的旗標，與清單外旗標的原因和下一步
 #   load_input            讀 hook 的 JSON
@@ -723,6 +724,34 @@ def read_file(where, word, cwd, state, step=None):
 
 def shown(word):
     return word.text if word is not None and word.static else ""
+
+
+# ── git ───────────────────────────────────────────────────────────────────
+
+GIT_GLOBAL_VALUES = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env")
+
+
+def git_parts(args):
+    """git 的 (全域選項, 子指令, 子指令後面的參數)。全域選項是依序的 (名稱, 值的 Word 或 None)，--x=值 的名稱不含 =值。
+    全域選項或子指令來自 shell 展開時，子指令是 None、其餘參數是從那個字開始的全部；沒有子指令時子指令是空字串。
+    要值的全域選項（-C、-c…）吃掉下一個字，不管它是不是字面。"""
+    options = []
+    i = 0
+    while i < len(args):
+        word = args[i]
+        if not word.static:
+            return options, None, args[i:]
+        text = word.text
+        if text in GIT_GLOBAL_VALUES:
+            options.append((text, args[i + 1] if i + 1 < len(args) else None))
+            i += 2
+        elif text.startswith("-"):
+            name = text.split("=", 1)[0]
+            options.append((name, sub_word(word, len(name) + 1) if "=" in text else None))
+            i += 1
+        else:
+            return options, text, args[i + 1:]
+    return options, "", []
 
 
 # ── gh ────────────────────────────────────────────────────────────────────
