@@ -27,6 +27,9 @@
   合併，而 rebase 一定改寫 SHA。`--force-with-lease` 而非 `--force`，因為前者會在遠端
   有你沒看過的東西時停下來。
   **絕不對 `main` 或任何別人也在推的分支 force push。**
+  Claude Code 的 PreToolUse hook `script/claude-hooks/host-push-rules.sh` 在本機擋推送的寫法（#409）：每個目的地都寫死成
+  完整的 ref（`git push -u origin feat/x:refs/heads/feat/x`），推到 main、不帶 lease 的 force push、清單外的旗標都擋；
+  「只推自己的分支」hook 判斷不了，由執行的人確認。
   （這條先前寫成「不得 force push」，兩個獨立的工作流各自把它讀成「連自己的分支都不能
   rebase 後推」，於是把該 rebase 的 PR 留在落後狀態。規則的範圍沒寫清楚，等於規則沒寫。）
 - **自己無法決定的事**（owner 層級／架構）→ 開 GitHub issue 並等待，但不要空轉：同時去做另一個沒被擋住的 issue。
@@ -78,7 +81,7 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 
 | # | 規則 | 真正擋的那一層 | hook | 擋不了的部分 |
 |---|---|---|---|---|
-| 1 | 不直推 main、不 force push、不刪 main | ruleset | #409：擋推到 main 的 `git push`（未實作） | — |
+| 1 | 不直推 main、不 force push、不刪 main | ruleset | #409：`script/claude-hooks/host-push-rules.sh` 擋目的地是 `refs/heads/main` 的 `git push`（含刪除 main）與不帶 lease 的 force push | git 設定造成的額外推送（`push.followTags`、`push.recurseSubmodules`、`remote.<name>.mirror`）：hook 不讀設定，由 ruleset 擋 |
 | 2 | 由 CI 的 merge job 以 merge commit 合併；agent 不合併，網頁合併只由維護者操作 | 只擋「合併方式」：ruleset 只允許 merge commit，加上第 3、4 列的條件。伺服器端沒有限制「誰可以送出合併」 | #408 第 1 點：`script/claude-hooks/pr-rules.sh` 擋 agent 的 `gh pr merge`、寫入 `pulls/<n>/merge` 的 `gh api`、合併類 mutation 的 `gh api graphql`、`mcp__ccd_pr__set_auto_merge` | 「agent 不合併」「網頁合併只由維護者、照下面的程序」是規範 |
 | 3 | `ci-rollup` 通過，而且分支和最新的 main 同步，才合併 | ruleset（必要檢查＋strict） | 同上 | 落後時 rebase 再推送 |
 | 4 | PR 的 review 討論串解決才合併 | ruleset | 不需要 | 解決後要手動重跑 merge job（沒有觸發事件） |
@@ -93,9 +96,10 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 13 | 合併前跑完 acceptance、署名檢查等全部檢查 | CI：都列進 `ci-rollup`，merge job 只等 `ci-rollup` | 不需要 | — |
 | 14 | repo 的保護設定和下面「repo 保護設定」表一致（第 1～5 列的設定沒被改掉） | CI：`repo-rules`（列進 `ci-rollup`） | 不需要 | bypass 名單讀不到；只在 CI 跑的時候才發現 |
 | 15 | 不是 PR 的觸發不能替 PR 開綠燈：手動觸發的 `ci-rollup` 只在 main 上會綠 | CI：`ci_rollup.sh` 遇到 workflow_dispatch 而 ref 不是 main 就失敗 | 不需要 | 在功能分支上手動觸發仍看得到各 job 結果，但不能當合併或 TDD red 的依據 |
-| 16 | `git push` 寫完整的目的地 ref | 沒有（推到 main 由 ruleset 擋） | #409：目的地判斷不出來就擋（未實作） | — |
-| 17 | force push 只用 `--force-with-lease`，只推自己的分支 | ruleset 擋 main；其他分支沒有 | #409：擋不帶 lease 的 force push（未實作） | 「只推自己的分支」由人確認 |
+| 16 | `git push` 寫完整的目的地 ref | 沒有（推到 main 由 ruleset 擋） | #409：`host-push-rules.sh` 只認寫死的 `refs/heads/<名稱>`／`refs/tags/<名稱>`；沒寫 refspec、沒寫 `:<dst>`、matching、萬用字元、清單外的旗標都擋 | git 設定造成的額外推送（同第 1 列） |
+| 17 | force push 只用 `--force-with-lease`，只推自己的分支 | ruleset 擋 main；其他分支沒有 | #409：`host-push-rules.sh` 擋 `--force`、`-f`、`+` 開頭的 refspec、`--no-force-with-lease` | 「只推自己的分支」：hook 不知道分支是誰的，由執行的人照上面「工作流程」確認 |
 | 18 | commit、PR、issue 與留言不帶 Claude 署名與 session 連結（#405） | CI：`attribution`（PR 的 commit 訊息、標題與描述，列進 `ci-rollup`） | repo 的 `attribution` 設定、Claude Code 的 PreToolUse hook、本機 commit-msg 檢查（已實作，#405） | 網頁上直接寫的內容、留言（見上面「Commit 訊息」） |
+| 19 | 檢查工具一律在容器裡跑，不在主機直接跑（`CM_TEST_LOCAL=1 ./script/test.sh` 是明文的例外；下面「品質閘門」） | CI 在容器裡跑，主機的結果不算證據 | #409：`host-push-rules.sh` 擋 Claude Code 經 Bash 在主機直接跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint` 與 `python -m pytest\|ruff\|mypy\|pylint` | 間接呼叫（`python -c`、`uv run`、自寫腳本、別名）；Edit／Write 之後 `check_file.sh` 自動開 docker 的路徑（#412）；cloud 工作階段 |
 
 ### 合併程序
 
@@ -264,6 +268,8 @@ PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從�
 （維護者 11/20 定案，#406；ADR-00000027 的 Amendment）。那是提早攔的一層，不是證據——`just test` 與 CI 仍在容器裡跑，CI 是最後一道。
 
 `./script/test.sh`（或 `just test`）會建置 `docker/Dockerfile.test-tools` 並把自己轉進容器重跑；CI 呼叫同一支腳本，不安裝任何工具。一份映像，兩個呼叫者（ADR-00000027）。綠了才推。
+
+Claude Code 經 Bash 直接在主機跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint`（含 `python -m …`），會被 PreToolUse hook `script/claude-hooks/host-push-rules.sh` 擋下（#409）；`./script/test.sh` 與 `CM_TEST_LOCAL=1 ./script/test.sh` 不擋。
 
 不要為了「快速確認一下」就去呼叫主機的直譯器。**主機不是這個專案的證據**，而這句話不是風格偏好——它已經在這裡給過四個錯誤答案：
 
