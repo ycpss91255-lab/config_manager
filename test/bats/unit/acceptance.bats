@@ -380,7 +380,7 @@ signoff_block() {
 
 GOOD_SIGNOFF="by = '王小明 <ming@example.com>'
 date = 2026-12-01
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123#issuecomment-456'
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123#issuecomment-456'
 summary = '未參與開發的同事照步驟操作，五項任務都完成'"
 
 @test "人工檢查點沒有簽核時，列為人工待驗" {
@@ -480,7 +480,7 @@ summary = '未參與開發的同事照步驟操作，五項任務都完成'"
 
   report
 
-  [[ "${output}" == *"檢查點 1  已簽核"*"https://github.com/ycpss91255-research/config_manager/issues/123#issuecomment-456"* ]]
+  [[ "${output}" == *"檢查點 1  已簽核"*"https://github.com/ycpss91255-lab/config_manager/issues/123#issuecomment-456"* ]]
 }
 
 @test "自動檢查全部通過、人工檢查點都已簽核時，整體通過，以 0 結束" {
@@ -517,7 +517,7 @@ summary = '未參與開發的同事照步驟操作，五項任務都完成'"
   start_map
   manual_checkpoint 1 '只能由真人驗收的' "by = '王小明 <ming@example.com>'
 date = 2026-12-01
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'"
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123'"
 
   report
 
@@ -529,7 +529,7 @@ evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'"
   start_map
   manual_checkpoint 1 '只能由真人驗收的' "by = ''
 date = 2026-12-01
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123'
 summary = '做了什麼'"
 
   report
@@ -542,7 +542,7 @@ summary = '做了什麼'"
   start_map
   manual_checkpoint 1 '只能由真人驗收的' "by = '王小明 <ming@example.com>'
 date = '2026-12-01'
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123'
 summary = '做了什麼'"
 
   report
@@ -569,7 +569,7 @@ summary = '做了什麼'"
   checkpoint 1 '自動的' "'test/pytest/unit/test_green.py'"
   manual_checkpoint 7 '只能由真人驗收的' "by = ''
 date = 2026-12-01
-evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'
+evidence = 'https://github.com/ycpss91255-lab/config_manager/issues/123'
 summary = '做了什麼'"
 
   report
