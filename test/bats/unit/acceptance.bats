@@ -564,6 +564,21 @@ summary = '做了什麼'"
   [[ "${output}" == *"evidence："* ]]
 }
 
+# 改名前的 org 名稱不保留，舊網址靠的是轉址；舊名稱被別人註冊、建了同名 repo，轉址就失效，
+# 那個網址會指到別人的 repo（#418）。所以舊 org 的網址不算這個 repo 的證據。
+@test "簽核的 evidence 是改名前的 org（ycpss91255-research）的網址時以 2 結束，並指名那一欄" {
+  start_map
+  manual_checkpoint 1 '只能由真人驗收的' "by = '王小明 <ming@example.com>'
+date = 2026-12-01
+evidence = 'https://github.com/ycpss91255-research/config_manager/issues/123'
+summary = '做了什麼'"
+
+  report
+
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"evidence："* ]]
+}
+
 @test "簽核有問題時，指名是哪一條檢查點" {
   start_map
   checkpoint 1 '自動的' "'test/pytest/unit/test_green.py'"
