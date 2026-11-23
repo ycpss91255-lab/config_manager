@@ -5,7 +5,7 @@
 #
 # 目錄是 system，不是 smoke。PDF §3.6.1 的三個正交軸裡，smoke 是**軸 3 的型別**
 # （目的），unit／integration／system／acceptance 才是**軸 2 的層級**（範圍）。
-# 型別寫在檔名裡，目錄留給層級——參照專案 ycpss91255-docker/base 就是這樣分的，
+# 型別寫在檔名裡，目錄留給層級——參照專案 ycpss91255-lab/base 就是這樣分的，
 # 它的 test/bats/ 底下只有那四個層級（#116）。
 #
 # 目錄決定「它屬於哪個範圍」，型別決定「誰執行它」。§3.6.1 的軸 3 明文寫著 smoke

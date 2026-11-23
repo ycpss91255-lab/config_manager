@@ -302,7 +302,7 @@ PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從�
 
 ### Issue tracker
 
-GitHub Issues（`ycpss91255-research/config_manager`），以 `gh` CLI 操作。決策與驗收證據
+GitHub Issues（`ycpss91255-lab/config_manager`），以 `gh` CLI 操作。決策與驗收證據
 一律寫回 issue。見 `doc/agents/issue-tracker.md`。
 
 ### Triage 標籤

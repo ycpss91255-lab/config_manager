@@ -10,7 +10,7 @@
 
 本 repo 出現了三種 commit 訊息風格並存：協作者的 `T14：…`／`雜項：…`、
 本次骨架工作的英文 Conventional Commits（無 scope）、以及組織共用模板
-`ycpss91255-docker/base` 的形式。維護者決定**對齊 base**。
+`ycpss91255-lab/base` 的形式。維護者決定**對齊 base**。
 
 問題不在於決定本身，而在於「對齊 base」這句話沒有可檢查的內容。
 base 沒有 CONTRIBUTING、沒有 commit lint、沒有任何一份文件寫下它的慣例——

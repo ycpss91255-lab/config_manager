@@ -59,7 +59,7 @@
 
 **只有四個層級，而且沒有第五個。** `test/bats/runtime/` 與 `test/bats/smoke/` 曾經
 各自站在層級的位置上，兩者都不是層級（#116）。`runtime` 講的是「誰執行它」，
-`smoke` 是軸 3 的型別。參照專案 `ycpss91255-docker/base` 的 `test/bats/` 底下也只有
+`smoke` 是軸 3 的型別。參照專案 `ycpss91255-lab/base` 的 `test/bats/` 底下也只有
 那四個。
 
 **「它在哪個目錄」與「誰執行它」是兩個獨立的問題，不該互相決定。**

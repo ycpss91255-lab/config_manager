@@ -1,6 +1,6 @@
 # Issue tracker：GitHub
 
-這個 repo 的 issue 與規格都住在 GitHub Issues（`ycpss91255-research/config_manager`），
+這個 repo 的 issue 與規格都住在 GitHub Issues（`ycpss91255-lab/config_manager`），
 一律以 `gh` CLI 操作。repo 由 `git remote -v` 推得，在 clone 內執行時 `gh` 會自己認出來。
 
 ## 慣例

@@ -2,7 +2,7 @@
 #
 # commit 訊息 lint。檢查這條分支新增的 commit，不檢查歷史。
 #
-# 規則取自 ycpss91255-docker/base，以它最近 200 筆 commit 取樣得出——因為
+# 規則取自 ycpss91255-lab/base，以它最近 200 筆 commit 取樣得出——因為
 # 「對齊 base」只有在「base 實際上怎麼做」被寫在工具讀得到的地方時才檢查得了：
 #
 #   type      fix 63 / feat 38 / refactor 31 / docs 26 / test 15 /
@@ -43,7 +43,7 @@ usage() {
 
   <base-ref>  檢查這個 ref 之後的 commit（預設 origin/main）。
 
-規則取樣自 ycpss91255-docker/base：
+規則取樣自 ycpss91255-lab/base：
 
   fail  type 不在 feat fix docs refactor test chore ci perf 之內
   fail  缺少「type(scope): 」前綴，或前綴格式不對

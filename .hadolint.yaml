@@ -1,5 +1,5 @@
 ---
-# 對齊 ycpss91255-docker/base 的規則集，扣掉那些只適用於模板自己那套
+# 對齊 ycpss91255-lab/base 的規則集，扣掉那些只適用於模板自己那套
 # 「BASE_IMAGE 由取用者選」情境的規則。
 ignored:
   # 「apt-get install 要釘版本」。這裡不釘，理由與模板不釘相同：一份映像若沒有
