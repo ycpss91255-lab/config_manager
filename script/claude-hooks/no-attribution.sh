@@ -142,21 +142,6 @@ def dispatch(program, args, state, assignments, words):
         indirect(words)
 
 
-def git_subcommand(texts):
-    i = 0
-    while i < len(texts):
-        text = texts[i]
-        if text is None:
-            return None
-        if text in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env"):
-            i += 2
-        elif text.startswith("-"):
-            i += 1
-        else:
-            return text
-    return None
-
-
 GH_VERBS = {"pr": {"create", "edit", "comment"}, "issue": {"create", "edit", "comment"}, "release": {"create", "edit"}}
 
 
@@ -176,7 +161,7 @@ def indirect(words):
         if text is None:
             continue
         name = os.path.basename(text)
-        if (name == "git" and git_subcommand(texts[i + 1:]) == "commit") or (name == "gh" and gh_writes(texts[i + 1:])):
+        if (name == "git" and git_parts(words[i + 1:])[1] == "commit") or (name == "gh" and gh_writes(texts[i + 1:])):
             runner = os.path.basename(texts[0]) if texts[0] else "這條指令"
             block(f"{runner} 執行的 {name}",
                   "git commit 或 gh 的寫入交給別的程式執行（例如 xargs、find -exec），參數在執行時才決定，hook 核對不了",
@@ -215,38 +200,22 @@ STEP_COMMIT_FLAGS = "只用 -m、-F、--trailer 明帶訊息（另外認得 -a�
 
 
 def analyze_git(args, state, assignments):
-    cwd = state.cwd
-    config = []
-    i = 0
-    subcommand = None
-    while i < len(args):
-        word = args[i]
-        if not word.static:
-            if any(a.static and a.text == "commit" for a in args[i:]):
-                block("git", "git 的選項或子指令來自 shell 展開，hook 核對不了", STEP_LITERAL)
-            return
-        text = word.text
-        if text == "-C":
-            if i + 1 < len(args):
-                target = args[i + 1]
-                cwd = resolve(cwd, target.text) if target.static else None
-            i += 2
-        elif text in ("-c", "--config-env"):
-            config.append(text)
-            i += 2
-        elif text.startswith("--config-env="):
-            config.append("--config-env")
-            i += 1
-        elif text in ("--git-dir", "--work-tree", "--namespace", "--super-prefix"):
-            i += 2
-        elif text.startswith("-"):
-            i += 1
-        else:
-            subcommand = text
-            break
+    options, subcommand, rest = git_parts(args)  # 全域選項的讀法和推送 hook 共用（shell-parse.sh，#409）
+    if subcommand is None:
+        if any(a.static and a.text == "commit" for a in rest):
+            block("git", "git 的選項或子指令來自 shell 展開，hook 核對不了", STEP_LITERAL)
+        return
     if subcommand != "commit":
         return
-    analyze_commit(args[i + 1:], state, cwd, config, assignments)
+    cwd = state.cwd
+    config = []
+    for name, value in options:
+        if name == "-C":
+            if value is not None:
+                cwd = resolve(cwd, value.text) if value.static else None
+        elif name in ("-c", "--config-env"):
+            config.append(name)
+    analyze_commit(rest, state, cwd, config, assignments)
 
 
 def trailer_line(text):

@@ -19,6 +19,11 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-rules.sh || exit 2",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/host-push-rules.sh || exit 2",
+            "timeout": 30
           }
         ]
       },

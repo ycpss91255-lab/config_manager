@@ -1396,6 +1396,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/claude-hooks/no-attribution.sh`、`.claude/settings.json` 的 `attribution` 與 PreToolUse 接線（#405） | `test/bats/unit/no_attribution.bats` |
 | `script/claude-hooks/pr-rules.sh`、`script/claude-hooks/shell-parse.sh`（和署名 hook 共用的指令解析與旗標清單）、`.claude/settings.json` 的 PreToolUse 接線（#408） | `test/bats/unit/pr_rules.bats` |
 | `script/claude-hooks/pr-ready-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#408） | `test/bats/unit/pr_ready_reminder.bats` |
+| `script/claude-hooks/host-push-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線（#409；git 的全域選項由 `shell-parse.sh` 的 `git_parts` 讀，和署名 hook 共用） | `test/bats/unit/host_push_rules.bats` |
 | `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
 | `script/pr_binding.sh`、`script/closing-references.txt`（#407：共用的綁定判定與唯一一份關閉參照的擷取規格） | `test/bats/unit/pr_binding.bats` |
 | `script/lint_merge_gate.sh`、`ci.yaml` 的 `merge-gate` job 在 `ci-rollup` 的分組（#407） | `test/bats/unit/lint_merge_gate.bats` |
@@ -1962,6 +1963,7 @@ CI 的 `attribution` job（`script/lint_attribution.sh pr`）。
 | `git commit --amend --no-edit`、`git commit --amend --no-edit --trailer "x: y"` | 各以 2 結束，下一步寫明帶訊息（`--amend -m …` 或 `--amend -F <檔>`） |
 | `git commit --amend -m "clean"` | 以 0 結束 |
 | 同一條指令先 `cd` 到別的目錄，再以相對路徑帶入檔 | 讀的是 `cd` 之後那個目錄裡的檔 |
+| git 的全域選項：`git -C sub commit -F m.txt`、`git -c core.hooksPath=/dev/null commit -m ok`、`echo x \| xargs git commit`（全域選項的讀法和推送 hook 共用 `shell-parse.sh` 的 `git_parts`，#409） | 讀的是 `sub` 裡的檔；`-c` 以 2 結束並指名；交給 `xargs` 的以 2 結束 |
 | 寫入放在指令替換裡（`url=$(gh pr create …)`） | 照樣檢查 |
 | 帶入的檔在同一條指令裡先被重新導向寫出 | 以 2 結束（hook 讀到的是執行前的內容） |
 | PATH 上沒有 python3 | 以 2 結束並寫出下一步 |
@@ -2164,6 +2166,53 @@ PostToolUseFailure，或 `tool_response` 是錯誤文字的字串。被觀察的
 - 本 repo 的身分讀的是本機簽出的 remote：remote 還指著改名前的 repo 時，hook 和 CI（`GITHUB_REPOSITORY`）認的本 repo 會不同，以 CI 為準。
 - 提醒之後有沒有照做；merge job 失敗、issue 沒被關（發生在 GitHub 上）。
 
+**主機檢查與推送的 Claude Code hook**（#409）。規則是 `AGENTS.md` 既有的兩段：「品質閘門」的檢查一律在容器裡跑（主機給過四個錯誤
+答案），「工作流程」的不直推 main、`git push` 寫完整的目的地 ref、force push 只用 `--force-with-lease`。真正擋的是 CI 與 main 的
+ruleset；這支在本機提早擋、給清楚的下一步。由 `.claude/settings.json` 掛上、在主機上跑，**只讀工具呼叫的輸入裡的指令文字**（#409 的
+Q1）：不讀 git 設定、不呼叫 git、不讀指令帶入的檔，也不連網。讀 shell 指令的那一段與 git 的全域選項（`-C`、`-c`…，`git_parts`）和
+署名 hook 共用 `script/claude-hooks/shell-parse.sh`。判斷不了的時候擋下並寫出下一步，不默默放寬保護（Q8）。規格把 hook 會收到的 JSON
+餵進標準輸入，看結束碼與訊息。
+
+**`script/claude-hooks/host-push-rules.sh`**（PreToolUse，matcher `Bash`）被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 主機檢查：`pytest test/pytest`、`cd x && ruff check src`、`python3 -m mypy src` | 以 2 結束，下一步寫「改用 ./script/test.sh（在檢查映像裡跑，執行前照 docker 先問），或看 GitHub CI」 |
+| 其餘的檢查工具與寫法：`python -m pytest`、`python3 -B -m pylint`、`python3 -mruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint`、以路徑呼叫的 `.venv/bin/pytest`、開頭有變數設定的 `PYTHONPATH=src pytest`、放在 `\|\|`、`;`、`\|` 後面的 | 以 2 結束 |
+| `CM_TEST_LOCAL=1 pytest test/pytest`（變數設定放在檢查工具前面） | 以 2 結束，下一步指向 `CM_TEST_LOCAL=1 ./script/test.sh` |
+| `./script/test.sh --lint`、`CM_TEST_LOCAL=1 ./script/test.sh`、`python3 -m pip …`、`python3 <腳本>`、`grep -n pytest pyproject.toml` | 以 0 結束 |
+| 批次推送與清單外的旗標（refspec 都寫完整）：`--branches`、`--all`、`--recurse-submodules=on-demand`、`--no-verify`、`--prune`、縮寫的 `--dry` | 以 2 結束，原因指名那個旗標，下一步寫「只用這些旗標：…」；refspec 的下一步不出現 |
+| 目的地不明確：`git push`、`git push origin`、`git push -u origin feat/x`、`git push origin :`、`git push origin 'refs/heads/*:refs/heads/*'`、第一個位置參數就是 refspec（它被當成 remote） | 以 2 結束，下一步寫「每個 refspec 都寫成 <來源>:refs/heads/<名稱>，例如 git push -u origin feat/x:refs/heads/feat/x」 |
+| `git push --all origin`、`git push --tags origin` | 以 2 結束，旗標與 refspec 兩個下一步都寫出 |
+| 目的地不是寫死的完整 ref：`feat/x:feat/x`、`feat/x:HEAD`、`"feat/x:refs/heads/$BR"`、`feat/x:refs/heads/`、`feat/x:refs/notes/x`；remote 來自 shell 變數 | 以 2 結束（前三種寫出 refspec 的下一步） |
+| 推到 main：`feat/x:refs/heads/main`、`:refs/heads/main`、`a:refs/heads/a b:refs/heads/main` | 以 2 結束，下一步寫「不能推到 main」 |
+| 來源是 main、目的地是自己的分支（`main:refs/heads/feat/x`） | 以 0 結束（只看目的地） |
+| 強制推送：`-f`、`--force --force-with-lease`、`+feat/x:refs/heads/feat/x`、`--force-with-lease --no-force-with-lease`、連寫的 `-uf` | 以 2 結束，下一步寫「改用 --force-with-lease」 |
+| 刪除模式：`git push --delete origin refs/heads/feat/x` | 以 0 結束 |
+| 刪除模式：`--delete origin refs/heads/main`；短名的 `--delete origin feat/x`、`-d origin feat/x` | 以 2 結束；前者下一步寫「不能推到 main」，短名寫「刪除模式的每個參數都寫成完整的 ref，例如 git push --delete origin refs/heads/feat/x」 |
+| 放行：`git push -u origin feat/x:refs/heads/feat/x`、`git push origin a:refs/heads/a b:refs/heads/b`、`git push --force-with-lease origin feat/x:refs/heads/feat/x`、`git push --force-with-lease=refs/heads/a origin a:refs/heads/a b:refs/heads/b`、`git -C ../wt push origin feat/y:refs/heads/feat/y`、推 tag 的 `v1.0.0:refs/tags/v1.0.0`、清單裡的旗標全部用上、`--no-recurse-submodules` 與 `--recurse-submodules=no` | 以 0 結束 |
+| `git -c push.followTags=true push …`、推送前以 `GIT_CONFIG_` 開頭的變數設定 | 以 2 結束（這次推送的 git 設定，hook 不讀、判斷不了實際推什麼） |
+| 不讀 git 設定、不呼叫 git：同一組指令在主 checkout 與它的 worktree 裡、在設了 `push.followTags=true` 與 `remote.origin.mirror=true` 的 repo 與沒設的 repo 裡、在 PATH 上沒有 git 時 | 每一條的結束碼與訊息都相同 |
+| `bash -c 'git push origin'`、交給 `xargs` 的 `git push`、子指令來自 shell 變數的 `git` | 以 2 結束 |
+| commit 訊息裡提到 `git push origin` | 以 0 結束（那不是 git push） |
+| 讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構、PATH 上沒有 python3 | 以 2 結束並寫出下一步 |
+| 沒有 git、也沒有檢查工具的指令 | 以 0 結束 |
+| `.claude/settings.json` | PreToolUse 的 matcher `Bash` 有一項呼叫這支腳本 |
+
+`--force-with-lease=<ref>` 只保護它點名的那一個 ref。沒點名的目的地沒有 lease，也沒有被強制：沒點名的既有分支仍受一般的
+fast-forward 限制，刪除照刪除模式的規則，tag 照 git 對 tag 的推送規則（遠端已有同名 tag 時，沒有強制就拒絕）。
+
+**它擋不住的**：
+- 間接呼叫：`python -c "import pytest; …"`、`uv run pytest` 這類交給別的程式執行的檢查工具（只看每一段的開頭）、自寫的腳本、shell
+  與 git 的別名、指令名稱來自變數（例如 `$GIT push …`）。
+- 「只有自己的分支才能 force push」：hook 不知道分支是誰的；`--force-with-lease` 只在遠端有你沒看過的東西時停下來。由執行的人照
+  `AGENTS.md`「工作流程」確認。
+- git 設定造成的額外推送：`push.followTags`（另外推 tag）、`push.recurseSubmodules`（另外推子模組；本 repo 11/23 沒有
+  `.gitmodules`）、`remote.<name>.mirror`（推送時等同 `--mirror`，可能推到 main）。hook 不讀設定；推到 main 的最後一道是 main 的 ruleset。
+- Edit／Write 之後由 `check_file.sh` 自動開 docker 的路徑：不經 Bash，由 #412 處理。
+- git hook 觸發的檢查（`script/githook.sh` 與 `script/githook-checks/`）：由 git 執行、不經 Claude 的 Bash 工具（#409 的 Q5）。
+- cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
+
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
 設計 §0.4：「所有規範必須可由工具檢查——**無法自動檢查的規範等同不存在**。」
@@ -2332,6 +2381,7 @@ PostToolUseFailure，或 `tool_response` 是錯誤文字的字串。被觀察的
 | `script/claude-hooks/shell-parse.sh` | T19（Claude Code hook 共用的指令解析與 gh 旗標清單，由署名 hook、PR 規則 hook 與轉成可合併的提醒載入，#408） | 已落地（由載入它的 hook 執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/pr-rules.sh` | T19（Claude Code 的 PreToolUse hook：agent 不合併、PR 描述要綁一張本 repo 的 issue、一律先開草稿，#408） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/pr-ready-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：PR 轉成可合併時提醒檢查全過會被 CI 合併，#408） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/host-push-rules.sh` | T19（Claude Code 的 PreToolUse hook：檢查工具不在主機直接跑、git push 寫明完整的目的地 ref、不推到 main、force push 只用 --force-with-lease，#409） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
 | `script/lint_merge_gate.sh` | T19（合併前的 TDD red 與 milestone 順序，#407） | 已落地（CI 的 `merge-gate` job 與 merge job 的重判執行，不由 `test.sh --lint` 執行） |
