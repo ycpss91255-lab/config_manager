@@ -14,6 +14,21 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/no-attribution.sh || exit 2",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-rules.sh || exit 2",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__ccd_pr__set_auto_merge",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-rules.sh || exit 2",
+            "timeout": 30
           }
         ]
       }
@@ -25,6 +40,28 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/check_file.sh >&2 || exit 2",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-ready-reminder.sh || exit 2",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-ready-reminder.sh || exit 2",
             "timeout": 30
           }
         ]
