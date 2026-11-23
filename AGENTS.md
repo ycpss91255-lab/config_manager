@@ -79,14 +79,14 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | # | 規則 | 真正擋的那一層 | hook | 擋不了的部分 |
 |---|---|---|---|---|
 | 1 | 不直推 main、不 force push、不刪 main | ruleset | #409：擋推到 main 的 `git push`（未實作） | — |
-| 2 | 由 CI 的 merge job 以 merge commit 合併；agent 不合併，網頁合併只由維護者操作 | 只擋「合併方式」：ruleset 只允許 merge commit，加上第 3、4 列的條件。伺服器端沒有限制「誰可以送出合併」 | #408：擋 agent 的 `gh pr merge`、合併 API、`mcp__ccd_pr__set_auto_merge`（未實作） | 「agent 不合併」「網頁合併只由維護者、照下面的程序」是規範 |
+| 2 | 由 CI 的 merge job 以 merge commit 合併；agent 不合併，網頁合併只由維護者操作 | 只擋「合併方式」：ruleset 只允許 merge commit，加上第 3、4 列的條件。伺服器端沒有限制「誰可以送出合併」 | #408 第 1 點：`script/claude-hooks/pr-rules.sh` 擋 agent 的 `gh pr merge`、寫入 `pulls/<n>/merge` 的 `gh api`、合併類 mutation 的 `gh api graphql`、`mcp__ccd_pr__set_auto_merge` | 「agent 不合併」「網頁合併只由維護者、照下面的程序」是規範 |
 | 3 | `ci-rollup` 通過，而且分支和最新的 main 同步，才合併 | ruleset（必要檢查＋strict） | 同上 | 落後時 rebase 再推送 |
 | 4 | PR 的 review 討論串解決才合併 | ruleset | 不需要 | 解決後要手動重跑 merge job（沒有觸發事件） |
 | 5 | `v*` tag 不能刪、不能 force push，tag 的 commit 要有 `ci-rollup` 通過（#164） | tag ruleset | 不需要 | 發版前先在 main 手動觸發 CI（推論、未實測）；發壞時改打下一個 rc 或下一個 patch 版 |
-| 6 | 每個 PR 都開到 main，用關閉關鍵字綁一張本 repo 還沒完成的 issue，描述和 GitHub 的關閉參照指同一張，標題與 commit 訊息不另外關別的 | CI：共用的綁定判定 `script/pr_binding.sh`（checkpoints、single-task、merge-gate、merge job 都用它；擷取規格只有 `script/closing-references.txt`） | #408：描述沒有關閉關鍵字或解析出兩張以上就擋（未實作） | 網頁上開的 PR（hook 看不到，CI 擋） |
-| 7 | 附 TDD red：這個 PR 的一輪 pull_request 執行（任一次 attempt）失敗在可認定 red 的 job 的 `specs` 步驟、紀錄有規格層級的失敗（純文件可寫「不適用：<理由>」） | CI：merge-gate | #408：`gh pr ready` 之後提醒附 TDD red（未實作） | 失敗的是不是這個 PR 新增的規格、原因是不是預期的，要靠 review |
+| 6 | 每個 PR 都開到 main，用關閉關鍵字綁一張本 repo 還沒完成的 issue，描述和 GitHub 的關閉參照指同一張，標題與 commit 訊息不另外關別的 | CI：共用的綁定判定 `script/pr_binding.sh`（checkpoints、single-task、merge-gate、merge job 都用它；擷取規格只有 `script/closing-references.txt`） | #408 第 2 點：`pr-rules.sh` 擋 `gh pr create`、`gh pr edit` 的描述沒有關閉關鍵字、解析出兩張以上或不是本 repo 的 | 網頁上開的 PR（hook 看不到，CI 擋） |
+| 7 | 附 TDD red：這個 PR 的一輪 pull_request 執行（任一次 attempt）失敗在可認定 red 的 job 的 `specs` 步驟、紀錄有規格層級的失敗（純文件可寫「不適用：<理由>」） | CI：merge-gate | #408 第 4 點：`script/claude-hooks/pr-ready-reminder.sh` 在 `gh pr ready` 之後提醒檢查全過會被合併、附 TDD red（固定提醒，hook 沒讀描述） | 失敗的是不是這個 PR 新增的規格、原因是不是預期的，要靠 review |
 | 8 | 前面的 milestone 沒關，後面 milestone 的 PR 不合併 | CI：merge-gate | 不需要 | milestone 關閉後要手動重跑（沒有觸發事件） |
-| 9 | PR 一律先開成草稿；驗完才轉成可合併 | merge job 略過草稿；GitHub 也不能合併草稿 | #408：`gh pr create` 沒帶草稿旗標就擋（未實作） | 什麼時候轉成可合併 |
+| 9 | PR 一律先開成草稿；驗完才轉成可合併 | merge job 略過草稿；GitHub 也不能合併草稿 | #408 第 3 點：`pr-rules.sh` 擋草稿旗標的有效值不是 true 的 `gh pr create` | 什麼時候轉成可合併 |
 | 10 | 改了 PR 描述後重新檢查 | CI：`pull_request` 有 `edited`，使用者或 agent 帳號改描述就重跑（GITHUB_TOKEN 的編輯不會）；合併前另有 merge job 的重判 | 不需要 | — |
 | 11 | 合併後核對 merge job 成功、issue 已關 | 沒有 | 做不到：合併發生在 GitHub 上 | 整條 |
 | 12 | 對 issue 的討論記在 issue；TDD red 與對 PR 的討論寫在 PR | CI 只核對 PR 描述裡有 `## TDD red` 段落 | 不需要 | 其餘 |
