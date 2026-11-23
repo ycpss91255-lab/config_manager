@@ -1,6 +1,6 @@
 # config_manager
 
-[![CI](https://github.com/ycpss91255-research/config_manager/actions/workflows/ci.yaml/badge.svg)](https://github.com/ycpss91255-research/config_manager/actions/workflows/ci.yaml)
+[![CI](https://github.com/ycpss91255-lab/config_manager/actions/workflows/ci.yaml/badge.svg)](https://github.com/ycpss91255-lab/config_manager/actions/workflows/ci.yaml)
 ![Coverage](doc/badge/coverage.svg)
 [![License](doc/badge/license.svg)](./LICENSE)
 
@@ -64,7 +64,7 @@ git 操作集中在 `io/`，測試時可替換為 fake——這是整個系統�
 
 ## 與組織共用容器模板的關係
 
-`ycpss91255-docker/base` 提供的共用模板在 v0.10.0 **不引入**（見 PDF 附錄 A）。
+`ycpss91255-lab/base` 提供的共用模板在 v0.10.0 **不引入**（見 PDF 附錄 A）。
 理由是模板提供的是完整 lifecycle，而本專案早期不需要那麼多；代價是模板給的東西
 要自己做一份。因此區分成三類，只做前兩類：
 
@@ -168,11 +168,11 @@ commit。
 ## 里程碑
 
 v0.1.0 – v0.10.0 十個里程碑已建立於
-[GitHub Milestones](https://github.com/ycpss91255-research/config_manager/milestones)，
+[GitHub Milestones](https://github.com/ycpss91255-lab/config_manager/milestones)，
 每個 milestone 的說明含該版本的能力矩陣與 §8.2 驗收檢查點；
 issue 依能力矩陣逐項拆分，各自帶驗收條件（§0.7：驗收條件屬 issue 的 acceptance criteria）。
 
-**動工前先關掉 [#1](https://github.com/ycpss91255-research/config_manager/issues/1)**——
+**動工前先關掉 [#1](https://github.com/ycpss91255-lab/config_manager/issues/1)**——
 逐項確認 `doc/TEST-PLAN.md` 已列出的每個測試介面與每條驗收旅程。沒有經過確認的測試介面，不寫測試。
 
 `v1.0.0` 不設在本規劃內，待實際運行一段時間後由維護者自行標記。

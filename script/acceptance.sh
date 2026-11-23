@@ -230,7 +230,7 @@ MANUAL_PENDING, SIGNED = "人工待驗", "已簽核"
 # 簽核的證據要指到這個 repo 的 issue 或 PR（可以帶 #issuecomment-… 之類的錨點）。只核對形狀，
 # 不核對那個網址的內容真的是這一條的證據——那一半要人看（doc/ACCEPTANCE-SIGNOFF.md）。
 EVIDENCE = re.compile(
-    r"^https://github\.com/ycpss91255-research/config_manager/(issues|pull)/[1-9][0-9]*(#[A-Za-z0-9_-]+)?$"
+    r"^https://github\.com/ycpss91255-lab/config_manager/(issues|pull)/[1-9][0-9]*(#[A-Za-z0-9_-]+)?$"
 )
 VERSION = re.compile(r"^v([0-9]+)\.([0-9]+)\.([0-9]+)$")
 
@@ -310,7 +310,7 @@ def signoff_problems(signoff):
     if not isinstance(evidence, str) or EVIDENCE.match(evidence) is None:
         problems.append(
             "evidence：要是這個 repo 的 issue 或 PR 網址，例如 "
-            "https://github.com/ycpss91255-research/config_manager/issues/123#issuecomment-456"
+            "https://github.com/ycpss91255-lab/config_manager/issues/123#issuecomment-456"
         )
     return problems
 
