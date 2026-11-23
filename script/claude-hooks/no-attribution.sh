@@ -22,9 +22,9 @@
 # 結束碼：0 放行；2 擋下（Claude Code 把 fd 2 的訊息交給工作階段）。其他結束碼 Claude Code 會放行，
 # 所以 python 中途失敗也一律轉成 2，.claude/settings.json 那一行也以 `|| exit 2` 接住這支不在的情況。
 #
-#
 # 讀 shell 指令的那一段（字、引號、指令替換、&&／;、bash -c、eval、cd）與 gh 的旗標清單在 script/claude-hooks/shell-parse.sh，
 # 和 PR 規則 hook（pr-rules.sh，#408）共用同一份。
+#
 # 這支刻意只用 bash 3.2 也有的寫法：hook 由使用者的環境啟動，PATH 上的 bash 不一定是 brew 的那一個
 # （macOS 內建的是 3.2）。判定都在 python 裡；python 程式以 -c 傳入，標準輸入留給 hook 的 JSON。
 set -u
