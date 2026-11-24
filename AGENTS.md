@@ -116,8 +116,8 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 
 ### 每條規則由哪一層擋
 
-這是唯一一張「規則和擋它的工具」對照表（#411 接著改同一張）。**改了任何一層，這張表要一起改。**「hook」欄標了 issue
-編號、還沒實作的，現在只有 CI 與 ruleset 在擋。
+這是唯一一張「規則和擋它的工具」對照表（第 20 列起由 #411 補上）。**改了任何一層，這張表要一起改。**「hook」欄標了 issue
+編號、還沒實作的，現在只有 CI 與 ruleset 在擋；「真正擋的那一層」寫「只靠文字」的，現在沒有任何工具在擋。
 
 | # | 規則 | 真正擋的那一層 | hook | 擋不了的部分 |
 |---|---|---|---|---|
@@ -140,6 +140,27 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 17 | force push 只用 `--force-with-lease`，只推自己的分支 | ruleset 擋 main；其他分支沒有 | #409：`host-push-rules.sh` 擋 `--force`、`-f`、`+` 開頭的 refspec、`--no-force-with-lease` | 「只推自己的分支」：hook 不知道分支是誰的，由執行的人照上面「工作流程」確認 |
 | 18 | commit、PR、issue 與留言不帶 Claude 署名與 session 連結（#405） | CI：`attribution`（PR 的 commit 訊息、標題與描述，列進 `ci-rollup`） | repo 的 `attribution` 設定、Claude Code 的 PreToolUse hook、本機 commit-msg 檢查（已實作，#405） | 網頁上直接寫的內容、留言（見上面「Commit 訊息」） |
 | 19 | 檢查工具一律在容器裡跑，不在主機直接跑（`CM_TEST_LOCAL=1 ./script/test.sh` 是明文的例外；下面「品質閘門」） | CI 在容器裡跑，主機的結果不算證據 | #409：`host-push-rules.sh` 擋 Claude Code 經 Bash 在主機直接跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint` 與 `python -m pytest\|ruff\|mypy\|pylint` | 間接呼叫（`python -c`、`uv run`、自寫腳本、別名）；Edit／Write 之後 `check_file.sh` 自動開 docker 的路徑（#412）；cloud 工作階段 |
+| 20 | 本機 git hook 登記的檢查在主機上直接跑、不經 docker；那是提早攔的一層，不是證據（#406；「品質閘門」） | CI：在容器裡跑同一組檢查，是最後一道 | 本機 git hook：`.githooks/` → `script/githook.sh`（`just setup hooks` 之後）；有登記的檢查而主機缺 bash 4 以上、python3 或 git 時擋下 | `--no-verify`、沒打開 hook 的 clone；主機工具和映像不同造成的差異 |
+| 21 | 既有的 PR 與 issue 說明裡的署名與 session 連結要清掉，不改 git 歷史（#410） | 沒有：一次性的清理（新寫的署名由第 18 列擋） | 不需要；清理用 `script/scrub_attribution.sh`（試跑列出、`--apply` 寫回），執行紀錄在 `doc/review/2026-11-24-attribution-scrub.md` | 說明的編輯紀錄、留言、commit 訊息；`--apply` 比對和寫入之間的空檔裡別人的修改 |
+| 22 | 回覆一律用繁體中文，包括進度句和指令說明（「工作階段的規則」） | 只靠文字 | #412（未實作；只管指令說明） | 回覆本身 |
+| 23 | 白話、一步一步；第一行是結果或下一步；清單最多 5 項 | 只靠文字 | 沒有 | 整條 |
+| 24 | 每個 PR、issue 開獨立的工作階段處理與驗證 | 只靠文字 | 沒有 | 整條 |
+| 25 | docker 指令先問；本機跑 `./script/test.sh` 先問 | 只靠文字 | #412（未實作） | 整條；Edit／Write `src/**/*.py`、`script/**/*.sh` 之後，檢查映像已經建好時 `check_file.sh` 會自己開 docker（第 19 列） |
+| 26 | 驗收證據以 GitHub CI 為準 | 合併只認 CI：ruleset 要 `ci-rollup`（第 3 列） | 不需要 | 回報與驗收紀錄裡把本機結果當證據 |
+| 27 | 不碰 `cm_verify_*` 驗證環境 | 只靠文字 | #412（未實作） | 整條 |
+| 28 | 不讀 token 檔 | 只靠文字 | #412（未實作） | 整條 |
+| 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 只靠文字 | #412（未實作） | 整條 |
+| 30 | 開 issue 前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了之後留言附最後一輪的判定（「工作流程」的「開 issue 與發留言的條件」） | 只靠文字 | #413（未實作） | 整條 |
+| 31 | 判「可以開」就開，不必問維護者；不亂開、不開了又關；owner 層級或架構的決定仍等維護者 | 只靠文字 | 沒有 | 整條 |
+| 32 | 動工前先查證現況（main、`git log`、`doc/TEST-PLAN.md`） | 只靠文字 | 沒有 | 整條 |
+| 33 | 回報或提問前先讀 issue 最新內容；提案、定案、實驗結果分開；已定案不重問；提問前逐題對照全部定案 | 只靠文字 | 沒有 | 整條 |
+| 34 | 子工作階段要人決定的問題先送協調工作階段；沒有協調工作階段時直接回報維護者 | 只靠文字 | 沒有 | 整條 |
+| 35 | 紅燈判讀：預期紅卻綠先核對測試走到重現路徑；不為了紅燈改斷言（「TDD」） | 只靠文字（merge-gate 只核對有 red，第 7 列） | 沒有 | 整條 |
+| 36 | PR 描述的驗證結果寫明受測 head、CI run、逐項判定與限定（「工作流程」的帳本那條） | 只靠文字 | 沒有 | 整條 |
+| 37 | 精確措辭 6 條（`doc/agents/reporting.md`） | 只靠文字 | 沒有 | 整條 |
+| 38 | 設計選擇分三類（`doc/agents/reporting.md`） | 只靠文字；第 2 類走到「新增一個測試介面」時，其中兩步由 `lint_test_interfaces.sh` 擋（「TDD」） | 沒有 | 分類本身 |
+| 39 | issue 提案底線 5 條（`doc/agents/reporting.md`） | 只靠文字 | 沒有 | 整條 |
+| 40 | 人工驗收：批次交付；完整絕對路徑只用在交給操作者的指令；退路指令另外給；判定照錄原話（`doc/CLAUDE-VERIFICATION.md`） | 只靠文字 | 沒有 | 整條 |
 
 ### 合併程序
 
