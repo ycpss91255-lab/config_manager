@@ -1398,6 +1398,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/claude-hooks/pr-ready-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#408） | `test/bats/unit/pr_ready_reminder.bats` |
 | `script/claude-hooks/host-push-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線（#409；git 的全域選項由 `shell-parse.sh` 的 `git_parts` 讀，和署名 hook 共用） | `test/bats/unit/host_push_rules.bats` |
 | `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
+| `script/scrub_attribution.sh`（#410：清掉既有 PR 與 issue 說明裡的署名與 session 連結，樣式清單的第四個呼叫端） | `test/bats/unit/scrub_attribution.bats` |
 | `script/pr_binding.sh`、`script/closing-references.txt`（#407：共用的綁定判定與唯一一份關閉參照的擷取規格） | `test/bats/unit/pr_binding.bats` |
 | `script/lint_merge_gate.sh`、`ci.yaml` 的 `merge-gate` job 在 `ci-rollup` 的分組（#407） | `test/bats/unit/lint_merge_gate.bats` |
 | `script/lint_repo_rules.sh`、`AGENTS.md` 的「repo 保護設定」表、`ci.yaml` 的 `repo-rules` job（#407） | `test/bats/unit/lint_repo_rules.bats` |
@@ -1933,9 +1934,9 @@ symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格
 
 **署名防護被觀察的是「要寫進 commit、PR、issue 的文字，有沒有命中 `script/attribution-patterns.txt` 的樣式，以及檢查的那一層看不看得到那段文字」**（#405）。
 樣式清單只有一份：一行一個延伸正規式，不分大小寫、逐行比對；共同作者行、`Claude-Session:` 行、`Generated with [Claude Code]`
-那一行只認行首，完整的 session 網址（帶 ID）任何位置都算。三個呼叫端都讀這一份：Claude Code 的 PreToolUse hook
+那一行只認行首，完整的 session 網址（帶 ID）任何位置都算。三個擋新寫入的呼叫端都讀這一份：Claude Code 的 PreToolUse hook
 `script/claude-hooks/no-attribution.sh`、登記的 commit-msg 檢查 `20-no-attribution.sh`（轉給 `script/lint_attribution.sh commit-msg`）、
-CI 的 `attribution` job（`script/lint_attribution.sh pr`）。
+CI 的 `attribution` job（`script/lint_attribution.sh pr`）；第四個是清既有說明的 `script/scrub_attribution.sh`（#410，見下）。
 
 **`script/claude-hooks/no-attribution.sh`** 由 `.claude/settings.json` 以 PreToolUse、matcher `Bash` 掛上，在主機上跑，只讀工具呼叫的
 輸入：標準輸入那份 JSON 裡的指令文字與 `cwd`，以及指令帶入的檔；不跑專案程式（#405 的 Q1）。它檢查 `git commit`、
@@ -1999,7 +2000,47 @@ PATH 上放假的 gh 回 PR 的標題與描述。被觀察的行為：
 - hook 只看指令文字本身：經腳本檔、git 或 gh 的別名、指令名稱來自變數這類方式執行的寫入看不到；同一條指令裡用重新導向與 `tee`
   以外的程式先寫出帶入的檔時，hook 讀到的是執行前的內容；`gh pr review --body`、`gh issue close --comment`、`gh pr merge --body` 這類
   #405 沒列的 gh 寫入不檢查。commit 與 PR 標題、描述有 commit-msg 檢查與 CI 這兩道；留言沒有。
-- 既有的舊內容：說明裡的署名另案處理，git 歷史不改。
+- 既有的舊內容：PR 與 issue 說明裡的由 `script/scrub_attribution.sh` 清（#410，下一段）；留言與 git 歷史不改。
+
+**清既有說明裡的署名**（#410，#269 第 3 步）。`script/scrub_attribution.sh` 是樣式清單的第四個呼叫端：以 `^` 開頭的樣式命中的整行刪掉，
+其他樣式（完整的 session 網址）只把命中的那一段換成「（session 連結已移除）」。預設是試跑：列舉全部 PR 與 issue 的所有分頁（`state=all`），
+列出要改的編號與每一份的改法，不寫入 GitHub，要改的每一份把原文存進備份目錄（預設在 `.gitignore` 裡的 `.attribution-scrub/`）；
+`--apply` 照最近一次試跑，寫入前再讀一次說明、和備份的原文比，相同才以 `gh api -X PATCH` 寫回。規格在 PATH 上放一支假的 gh——一份小小的
+GitHub：列舉一頁固定 2 筆、沒帶 `state=all` 時只回開著的、issues 的列舉照 GitHub 的樣子把 PR 也放進去——看結束碼、訊息、備份目錄裡的檔與
+假 gh 收到的寫入，不碰 GitHub。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 試跑：資料分在三頁以上，含已合併、已關閉的 PR 與已關閉的 issue | 列出每一份命中的編號（PR 在前、issue 在後），要改的份數兩份清單分開列；沒命中的不列；以 3 結束 |
+| 試跑 | 假 gh 收到的寫入是 0 個；兩份清單的列舉都帶 `state=all`，讀到空的那一頁為止 |
+| 試跑：說明含 CRLF、行首與行尾的空白、tab、非 ASCII、結尾沒有換行 | 備份目錄裡那一份和假 gh 給的原文逐位元組相同 |
+| 試跑：issues API 回傳裡的 PR | 被排除：每一份 PR 只以 PR 列出一次，沒有 issue 的備份 |
+| 試跑：每一份 | 列出刪第幾行（另刪幾行結尾空行）、換掉幾個網址；開著、不是草稿的 PR 另列一行，開著的草稿不列 |
+| 試跑的輸出 | 只有編號、行號與樣式：命中的共同作者行與完整的 session 網址都不在輸出裡 |
+| 改法：命中 `^` 開頭樣式的行（共同作者行、`Claude-Session:` 行、`Generated with [Claude Code]` 行） | 整行刪掉 |
+| 改法：行中的完整 session 網址 | 只把網址換成「（session 連結已移除）」，同一行其他文字保留 |
+| 改法：結尾有刪行 | 刪完之後說明結尾的空行一起刪（原本就在署名行後面的也算）；說明中間的空行不動；只在中間刪行時，結尾的空行不動 |
+| 改法：其餘內容（CRLF、行尾空白、tab、非 ASCII、只在行中引用的署名字樣、`session_<ID>`） | 逐位元組不變；每一行保留它原本的換行字元 |
+| 只在行中引用署名字樣、網址寫成 `session_<ID>` 的說明 | 不列出 |
+| `--apply` | 以 `gh api -X PATCH` 寫回 `repos/<repo>/pulls/<N>` 與 `repos/<repo>/issues/<N>`；全部寫回時以 0 結束 |
+| `--apply`：寫入前說明已被改過 | 那一份略過並列出、沒有寫入，其他照寫；以 1 結束 |
+| `--apply`：部分失敗 | 列出已改、略過、失敗三份清單；以 1 結束 |
+| `--apply`：已改的裡面有開著、不是草稿的 PR | 另列一行 |
+| `--apply`：沒有試跑過、或最近一次試跑沒有翻完所有分頁 | 以 1 結束並寫出下一步；不寫入（不退回用更早的那一次） |
+| 重跑：對略過的那一份重新試跑 | 新的備份與比對基準是當下的內容，再 `--apply` 時寫回的是由當下內容清過的版本；先前的備份不被覆蓋 |
+| 結案：`--apply` 之後再試跑 | 兩份清單都翻完、列出 0 個，以 0 結束 |
+| 某一頁讀取失敗或回的不是 JSON（PR 清單第 2 頁、issue 清單第 1 頁與第 2 頁；沒有任何命中時也一樣） | 以 1 結束，指名哪一份清單、第幾頁；不報 0 份 |
+| 換上一份改過的樣式清單（複製一份樹） | 照那一份判定：讀的是 `script/attribution-patterns.txt` |
+| #269 的完整內文（`test/fixtures/attribution/issue-269.md`） | 試跑列出 0 個，`--apply` 不寫入 |
+| 預設的備份目錄 | 在 `.gitignore` 裡：在 repo 根目錄試跑之後 `git status` 沒有新檔 |
+| 沒有 `--repo` | 以 2 結束 |
+
+**它擋不住的**：
+- 說明的編輯紀錄：GitHub 會保留舊版本，仍看得到（依 GitHub 文件，沒重讀）。
+- 留言裡的署名（#269 第 3 步只寫說明）；commit 訊息（#269 第 4 步，不做）。
+- `--apply` 比對與寫入之間的空檔裡別人的修改：沒有條件式寫入，那段時間裡的修改會被蓋掉。
+- 列舉途中有 issue 或 PR 被刪掉時，後面的項目往前移一格，可能漏看一份：結案那次試跑會再翻一次。
+- 規格用的是假 gh：真的 GitHub 一頁幾筆、`pull_request` 欄位與 `PATCH` 的回應，由實際執行那一次核對（`doc/review/` 的執行紀錄）。
 
 **合併規則的守門腳本**（#407）。維護者 11/20 定案：檢查全過由 CI 的 merge job 以 merge commit 合併（照
 `ycpss91255-lab/sim_asset`），每個 PR 都用關閉關鍵字綁一張 issue，合併前要有這個 PR 自己的 TDD red，前面的 milestone
@@ -2383,6 +2424,7 @@ fast-forward 限制，刪除照刪除模式的規則，tag 照 git 對 tag 的�
 | `script/claude-hooks/pr-ready-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：PR 轉成可合併時提醒檢查全過會被 CI 合併，#408） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/host-push-rules.sh` | T19（Claude Code 的 PreToolUse hook：檢查工具不在主機直接跑、git push 寫明完整的目的地 ref、不推到 main、force push 只用 --force-with-lease，#409） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
+| `script/scrub_attribution.sh` | T19（清掉既有 PR 與 issue 說明裡的 Claude 署名與 session 連結，#410） | 已落地（由執行者手動執行，不由 `test.sh --lint` 或 CI 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
 | `script/lint_merge_gate.sh` | T19（合併前的 TDD red 與 milestone 順序，#407） | 已落地（CI 的 `merge-gate` job 與 merge job 的重判執行，不由 `test.sh --lint` 執行） |
 | `script/lint_repo_rules.sh` | T19（repo 的保護設定和 `AGENTS.md` 的表一致，#407） | 已落地（CI 的 `repo-rules` job 執行，不由 `test.sh --lint` 執行） |
