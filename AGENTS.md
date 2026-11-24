@@ -72,6 +72,38 @@
 - **討論記在哪裡**：對 issue 的討論記在 issue；TDD red 證明與對 PR 的討論寫在 PR。
 - **決策要寫回它被提出的地方。** 討論定案後，把決策、佐證、以及被否決的選項與理由寫回該 issue 或 PR，不要只留在對話裡。關閉帶驗收條件的 issue 時，**證據附在 issue 上，勾選框實際勾起來**。
 
+## 工作階段的規則（#411）
+
+下面這些原本只在 Claude Code 的本機記憶或協調工作階段的指示裡，別台機器、Codex、cloud 工作階段都看不到；照維護者定案寫進 repo
+（Q3 原話「放進 repo 不要放 global」；總則原話「這些能做成hook 就做成 hook 不要用記憶來處理，要有明確規範」）。每條一句，細節在
+`doc/agents/reporting.md`（Q9）；每條由哪一層擋，見「合併規則」的「每條規則由哪一層擋」。括號裡是出處：「個人規則」指原本只在
+本機記憶裡的維護者個人規則。
+
+**回報與提問**
+
+- **回覆一律用繁體中文**，包括進度句和指令說明。（個人規則；Q3）
+- **白話、一步一步教；第一行是結果或下一步；清單最多 5 項。** 見 `doc/agents/reporting.md`「回報給維護者的寫法」。（個人規則；協調工作階段的指示；Q3）
+- **措辭要精確**：事實與推論分開、歸因有佐證、用精確名稱、不默默放寬保護等 6 條，逐條見 `doc/agents/reporting.md`「精確措辭」。（個人規則）
+- **設計選擇分三類**：例行實作選擇自己決定並寫依據、測試介面看是不是新的觀察位置、驗收規則變更要有依據或維護者確認，逐條見
+  `doc/agents/reporting.md`「設計選擇分三類」。（個人規則）
+- **回報或提問前先讀相關 issue 的最新內文與留言；提案、定案、實驗結果分開寫；已定案的不重問；提問前逐題對照全部定案，例行選擇
+  自己決定並寫依據。** 子工作階段要人決定的問題，先用 SendMessage 送協調工作階段，不直接問維護者，也不把一輪結束在「等使用者回答」；
+  協調工作階段能決定的自己決定，真的需要維護者決定的才由它去問；沒有協調工作階段時，直接回報維護者，一樣先對照定案。順序與細節見
+  `doc/agents/reporting.md`「回報與提問之前」。（個人規則；11/20 維護者意見；11/21 維護者原話「請問你沒有收到其他工作階段的問題嗎
+  為什麼是由工作階段直接問我」，經轉達）
+
+**工作階段與環境**
+
+- **每個 PR、issue 開一個獨立的工作階段處理與驗證。**（個人規則；Q3）
+- **不切換主 checkout 的分支**：新工作從最新的 `origin/main` 另開 worktree，在 worktree 裡做。（協調工作階段的指示；Q3）
+- **docker 指令先問**，包括會開 docker 的 repo 腳本與 recipe（`./script/test.sh`、`just test`、`just docker …`）；本機跑
+  `./script/test.sh` 也先問（含 `CM_TEST_LOCAL=1`）；驗收證據以 GitHub CI 為準，本機的結果不算（「品質閘門」）。（個人規則；Q3）
+- **不碰 `cm_verify_*` 驗證環境**：那是維護者人工驗收用的容器與 volume（`doc/USER-VERIFICATION.md` 的準備表），不啟動、不停止、
+  不重建、不改。（個人規則；Q3）
+- **不讀 token 檔**：存放存取 token 的檔（例如維護者機器上檔名含 token 的筆記）不讀、不搜尋到、不複製。（協調工作階段的指示；Q3）
+- **動工前先查證現況**：issue 內容常過期（已被後來的 PR 做掉卻沒關、引用的行號已經移動），先查 main、`git log`、`doc/TEST-PLAN.md`
+  再動手。（個人規則）
+
 ## 合併規則（#407）
 
 維護者 2026-11-20 定案：檢查全過，由 CI 的 `merge` job 以 merge commit 合併（照 `ycpss91255-lab/sim_asset`，不用
@@ -276,6 +308,7 @@ PR 標題含完整網址時仍會出現在 workflow 的執行名稱裡；沒從�
 （維護者 11/20 定案，#406；ADR-00000027 的 Amendment）。那是提早攔的一層，不是證據——`just test` 與 CI 仍在容器裡跑，CI 是最後一道。
 
 `./script/test.sh`（或 `just test`）會建置 `docker/Dockerfile.test-tools` 並把自己轉進容器重跑；CI 呼叫同一支腳本，不安裝任何工具。一份映像，兩個呼叫者（ADR-00000027）。綠了才推。
+它會開 docker，本機要跑先問維護者（「工作階段的規則」）；沒在本機跑時，推到自己的分支，以那一輪 GitHub CI 的結果為準（「合併程序」第 1 步）。驗收證據一律以 GitHub CI 為準。（#411）
 
 Claude Code 經 Bash 直接在主機跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint`（含 `python -m …`），會被 PreToolUse hook `script/claude-hooks/host-push-rules.sh` 擋下（#409）；`./script/test.sh` 與 `CM_TEST_LOCAL=1 ./script/test.sh` 不擋。
 
@@ -298,6 +331,9 @@ Claude Code 經 Bash 直接在主機跑 `pytest`、`ruff`、`mypy`、`pylint`、
 ## TDD
 
 紅 → 綠，一次一片。**測試只寫在 `doc/TEST-PLAN.md` 已確認的介面上**，絕不寫在未確認的介面上。期望值來自獨立來源；每個測試一個邏輯斷言；測試名稱說明程式碼做什麼，用 `CONTEXT.md` 的詞彙。
+
+**紅燈判讀**（#411；個人規則）：預期紅卻是綠，先核對測試真的走到重現的路徑；不為了讓它紅而改斷言，斷言要改先回報；確認紅燈的原因
+就是要修的問題，才修產品。
 
 **新增一個測試介面**（不是在既有介面上加一條行為）走四步，詳見 `doc/TEST-PLAN.md`
 的「新增一個測試介面」：
@@ -328,6 +364,10 @@ GitHub Issues（`ycpss91255-lab/config_manager`），以 `gh` CLI 操作。決�
 
 單一 context：`CONTEXT.md` ＋ **`doc/adr/`**（不是 `docs/adr/`——skill 的預設路徑在這裡
 是錯的）。見 `doc/agents/domain.md`。
+
+### 回報、提問與開 issue
+
+「工作階段的規則」與「開 issue 與發留言的條件」的細節（#411）。見 `doc/agents/reporting.md`。
 
 ## 改這份規範
 
