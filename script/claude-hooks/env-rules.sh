@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Claude Code 的 PreToolUse hook（matcher Bash）：工作階段與環境的規則（#412）。規則本文在
+# Claude Code 的 PreToolUse hook（matcher Bash，以及 Read|Edit|Write|Grep|Glob）：工作階段與環境的規則（#412）。規則本文在
 # AGENTS.md「工作階段的規則」；原本只靠文字，這支在本機擋下或先問，給清楚的下一步。
 #
 # 由 .claude/settings.json 掛上，在主機上跑。**只讀工具呼叫的輸入**（#412 的 Q1）：不呼叫 git、不跑專案程式與測試、不掃
@@ -11,6 +11,9 @@
 #            script/x.sh、bash script/x.sh 都算）就回傳 ask。
 #   第 3 點  cm_verify：命中第 1 點的指令，文字裡同時出現 cm_verify（參數、-p 專案名、前面的變數設定都算）就擋（deny），
 #            deny 優先於 ask。
+#   第 4 點  token 檔：Read／Edit／Write 的 file_path、Grep 的 path 與 glob、Glob 的 path 與 pattern、Bash 指令裡的每個字，
+#            檔名含 token 的 .md（不分大小寫）就擋。Grep 只在 glob 寫死副檔名、不是 md，而且 path 是 repo 裡的相對路徑時
+#            放行；Bash 的遞迴搜尋（grep -r／-R、rg、find … -exec grep、xargs grep）一律擋。
 #
 # **看不到、判斷不了的時候擋下並寫出下一步，不默默放寬保護**（Q8）。擋不住的寫在 doc/TEST-PLAN.md T19。
 #
@@ -52,14 +55,18 @@ CM_VERIFY = re.compile(r"(?i)cm_verify")
 STEP_DOCKER = "照 AGENTS.md「工作階段的規則」，docker 指令先問維護者；驗收證據以 GitHub CI 為準"
 STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容器與 volume，doc/USER-VERIFICATION.md 的準備表）："
                "不啟動、不停止、不重建、不改；要操作請維護者自己執行")
+STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段的規則」）；需要 token 的步驟請維護者自己執行"
+STEP_GREP = ("加上副檔名寫死、不是 .md 的 glob（例如 **/*.py），path 寫 repo 裡的相對路徑（不含 ..、不以 / 或 ~ 開頭）；"
+             "要讀單一檔案就用 Read")
+STEP_SEARCH = "改用 Grep 工具（glob 寫死副檔名、不是 .md，path 寫 repo 裡的相對路徑）"
 STEP_SPLIT = "把指令拆開，每段的程式、參數與路徑寫成字面"
-STEP_INPUT = ("這支由 Claude Code 的 PreToolUse hook 呼叫；手動執行時，把 hook 會收到的 JSON（tool_name、tool_input）"
+STEP_INPUT = ("這支由 Claude Code 的 PreToolUse hook 呼叫；手動執行時，把 hook 會收到的 JSON（tool_name、tool_input、cwd）"
               "餵進標準輸入")
 STEP_ENTRIES = "確認 script/claude-hooks/docker-entrypoints.txt 在這個簽出裡、讀得到，再重送"
 
 # shell-parse.sh 的分析程序用的兩個說法
-COMMANDS = "docker 這類指令"
-UNPARSABLE = "判斷不了它會不會開 docker"
+COMMANDS = "docker／grep 這類指令"
+UNPARSABLE = "判斷不了它會不會開 docker 或讀 token 檔"
 
 DENY = []  # (位置, 原因, 下一步)
 ASK = []   # 位置
@@ -79,7 +86,7 @@ def ask(where):
 def finish():
     if DENY:
         err = sys.stderr
-        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境，或是有 hook 判斷不了的地方。", file=err)
+        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境、不讀 token 檔，或是有 hook 判斷不了的地方。", file=err)
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
@@ -147,6 +154,7 @@ def entry_script(word, state):
 
 # ── 依指令分派（shell-parse.sh 的 analyze 呼叫） ─────────────────────────
 
+GREPS = {"grep", "egrep", "fgrep"}
 RUNNERS = {"sudo", "doas", "xargs", "watch", "parallel", "caffeinate", "stdbuf", "unbuffer"}
 
 
@@ -163,6 +171,13 @@ def dispatch(program, args, state, assignments, words):
             sourced = entry_script(args[0], state)
             if sourced is not None:
                 ask(f"{program} {sourced}")
+    elif program in GREPS:
+        analyze_grep(program, args)
+    elif program == "rg":
+        block("rg", "rg 會讀搜尋範圍裡每個檔的內容；它的設定檔、跟不跟隨 symlink 都會改變實際的搜尋範圍，只看指令判斷不了"
+              "會不會讀到 token 檔", STEP_SEARCH)
+    elif program == "find":
+        analyze_find(args, state)
     elif program in RUNNERS:
         analyze_runner(program, args, state)
 
@@ -178,7 +193,7 @@ def indirect(words):
 
 
 def analyze_runner(runner, args, state):
-    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問。"""
+    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問，有 grep、rg 就擋。"""
     for i, word in enumerate(args):
         if not word.static:
             continue
@@ -190,6 +205,12 @@ def analyze_runner(runner, args, state):
             ask(name)
         elif name == "just":
             analyze_just(args[i + 1:])
+        elif name in GREPS or name == "rg":
+            if runner in ("xargs", "find") or name == "rg":
+                block(f"{runner or '這條指令'} 執行的 {name}", f"{name} 交給別的程式執行，搜尋哪些檔在執行時才決定，"
+                      "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
+            else:
+                analyze_grep(name, args[i + 1:])
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -241,6 +262,118 @@ def analyze_shell(args, state):  # 取代 shell-parse.sh 的同名函式：另�
             ask(f"bash {script}")
 
 
+# ── 第 4 點：token 檔與遞迴搜尋 ───────────────────────────────────────────
+
+def token_named(text):
+    """檔名（最後一段）含 token 的 .md，不分大小寫。萬用字元照字面看（**/*token*.md 也算）。"""
+    name = text.rstrip("/").rsplit("/", 1)[-1].lower()
+    return "token" in name and name.endswith(".md")
+
+
+def each_word(items):
+    for item in items:
+        if item in (PUSH, POP):
+            continue
+        for word in item.words + [r[1] for r in item.redirections if r[1] is not None]:
+            yield word
+            for inner in word.nested:
+                yield from each_word(build(inner))
+
+
+GREP_VALUE_SHORT = "efmABCdD"
+GREP_VALUE_LONG = {"--regexp", "--file", "--max-count", "--after-context", "--before-context", "--context",
+                   "--directories", "--devices", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--label",
+                   "--binary-files"}
+
+
+def analyze_grep(program, args):
+    """grep -r／-R／--recursive／-d recurse 這類遞迴搜尋就擋；搜尋指名的檔不擋（指名 token 檔另外擋）。"""
+    i = 0
+    while i < len(args):
+        word = args[i]
+        text = word.text if word.static else word.prefix
+        if word.static and text == "--":
+            return
+        recursive = None
+        if text.startswith("--"):
+            name, equals, value = text.partition("=")
+            if name in ("--recursive", "--dereference-recursive"):
+                recursive = name
+            elif name in GREP_VALUE_LONG:
+                if not equals:
+                    i += 1
+                    value = args[i].text if i < len(args) else ""
+                if name == "--directories" and value == "recurse":
+                    recursive = "--directories=recurse"
+        elif text.startswith("-") and len(text) > 1:
+            for j, option in enumerate(text[1:]):
+                if option in "rR":
+                    recursive = f"-{option}"
+                    break
+                if option in GREP_VALUE_SHORT:
+                    value = text[j + 2:]
+                    if not value:
+                        i += 1
+                        value = args[i].text if i < len(args) else ""
+                    if option == "d" and value == "recurse":
+                        recursive = "-d recurse"
+                    break
+        if recursive is not None:
+            block(f"{program} {recursive}", "遞迴搜尋會讀目錄底下每個檔的內容；Read 的 deny 規則不涵蓋這類指令，grep 跟不跟隨 "
+                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_SEARCH)
+            return
+        i += 1
+
+
+def analyze_find(args, state):
+    for i, word in enumerate(args):
+        if word.static and word.text in ("-exec", "-execdir", "-ok", "-okdir"):
+            analyze_runner("find", args[i + 1:], state)
+            return
+
+
+def file_rules(tool, tool_input):
+    path = tool_input.get("file_path")
+    if isinstance(path, str) and token_named(path):
+        block(f"{tool} 的 file_path {path}", "這是檔名含 token 的 .md，存放存取 token 的檔不讀、不改", STEP_TOKEN)
+
+
+def grep_scope(path, glob):
+    """(放行與否, 原因)：glob 寫死副檔名、不是 md，path 是 repo 裡的相對路徑（沒給就是目前的目錄）。只看輸入（Q1）。"""
+    if not isinstance(glob, str) or not glob:
+        return False, "沒有 glob：Grep 會讀搜尋範圍裡每個檔的內容（type 參數不算：文件沒有定義各類型包含哪些副檔名）"
+    name = glob.rsplit("/", 1)[-1]
+    match = re.match(r"^[^\\!{}\[\]]*\.([A-Za-z0-9_+-]+)$", name)
+    if glob.startswith("!") or any(c in glob for c in "{}[]") or match is None:
+        return False, f"glob {glob} 的副檔名不是寫死的（含 {{…}}、[…]、! 或副檔名本身有萬用字元的不算）"
+    if match.group(1).lower() == "md":
+        return False, f"glob {glob} 的副檔名是 md"
+    if path is not None and path != "":
+        if not isinstance(path, str):
+            return False, "path 不是字串"
+        if path.startswith(("/", "~")) or ".." in path.split("/"):
+            return False, f"path {path} 不是 repo 裡的相對路徑（含 ..、以 / 或 ~ 開頭的不算）"
+    return True, ""
+
+
+def grep_rules(tool_input):
+    for field in ("path", "glob"):
+        value = tool_input.get(field)
+        if isinstance(value, str) and token_named(value):
+            block(f"Grep 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
+    allowed, why = grep_scope(tool_input.get("path"), tool_input.get("glob"))
+    if not allowed:
+        block("Grep", f"{why}；搜尋範圍裡可能有 token 檔", STEP_GREP)
+
+
+def glob_rules(tool_input):
+    """Glob 只回傳路徑、不讀內容：沒有指名 token 檔就放行。"""
+    for field in ("pattern", "path"):
+        value = tool_input.get(field)
+        if isinstance(value, str) and token_named(value):
+            block(f"Glob 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
+
+
 # ── 進入點 ────────────────────────────────────────────────────────────────
 
 def bash_rules(data):
@@ -251,6 +384,9 @@ def bash_rules(data):
     items = lex(command)
     if items is None:
         return
+    for word in each_word(items):
+        if word.text and token_named(word.text):
+            block(f"Bash 指令裡的 {word.text}", "這是檔名含 token 的 .md，存放存取 token 的檔不讀、不搜尋、不複製", STEP_TOKEN)
     run_items(items, State(cwd))
     if ASK and CM_VERIFY.search(command):
         block(f"{'、'.join(ASK)}（指令裡有 cm_verify）", "會碰到 cm_verify_* 驗證環境", STEP_VERIFY)
@@ -261,6 +397,16 @@ def main():
     tool = data.get("tool_name")
     if tool == "Bash":
         bash_rules(data)
+    elif tool in ("Read", "Edit", "Write", "Grep", "Glob"):
+        tool_input = data.get("tool_input")
+        if not isinstance(tool_input, dict):
+            stop("hook 的輸入", "JSON 裡沒有 tool_input，看不到這次的工具呼叫", STEP_INPUT)
+        if tool == "Grep":
+            grep_rules(tool_input)
+        elif tool == "Glob":
+            glob_rules(tool_input)
+        else:
+            file_rules(tool, tool_input)
     finish()
 
 

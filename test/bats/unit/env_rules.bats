@@ -13,6 +13,8 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../../.." && pwd)"
   HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
+  STEP_SEARCH="改用 Grep 工具"
+  STEP_GREP="加上副檔名寫死、不是 .md 的 glob"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
 }
 
@@ -203,6 +205,120 @@ expect_bash() {
   [ "$(bash_verdict "echo cm_verify_x")" = allow ]
 }
 
+# ── 第 4 點：token 檔 ─────────────────────────────────────────────────────
+
+@test "Read ../api token.md 被擋" {
+  call Read '{"file_path": "../api token.md"}'
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "Bash 的 cat \"~/x/My Token.md\" 被擋" {
+  [ "$(bash_verdict 'cat "~/x/My Token.md"')" = deny ]
+}
+
+@test "Glob 的 pattern 是 **/*token*.md 被擋" {
+  call Glob '{"pattern": "**/*token*.md"}'
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "Read doc/README.md 放行" {
+  call Read '{"file_path": "doc/README.md"}'
+
+  [ "$(verdict)" = allow ]
+}
+
+@test "指名的路徑不分大小寫：Read doc/API-Token.md 被擋" {
+  call Read '{"file_path": "doc/API-Token.md"}'
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "Edit、Write 指名 token 檔也被擋" {
+  run expect deny Edit '{"file_path": "/x/git token.md", "old_string": "a", "new_string": "b"}'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect deny Write '{"file_path": "notes/Token.MD", "content": "x"}'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "Grep：沒有 glob、glob 是 md 或不是寫死的副檔名、只給 type、path 不是 repo 裡的相對路徑的都被擋" {
+  run expect deny Grep \
+    '{"pattern": "ghp_"}' \
+    '{"pattern": "ghp_", "glob": "**/*.md"}' \
+    '{"pattern": "ghp_", "glob": "*.{py,md}"}' \
+    '{"pattern": "ghp_", "type": "py"}' \
+    '{"pattern": "ghp_", "path": "..", "glob": "**/*.py"}' \
+    '{"pattern": "ghp_", "path": "/tmp", "glob": "**/*.py"}' \
+    '{"pattern": "ghp_", "path": "src/a.py"}' \
+    '{"pattern": "ghp_", "path": "~/x", "glob": "**/*.py"}' \
+    '{"pattern": "ghp_", "glob": "*.p[y]"}' \
+    '{"pattern": "ghp_", "glob": "!*.py"}' \
+    '{"pattern": "ghp_", "glob": "*.*"}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "Grep 被擋時下一步寫加上副檔名寫死、不是 .md 的 glob" {
+  call Grep '{"pattern": "ghp_", "path": "src/a.py"}'
+
+  grep -q "${STEP_GREP}" "${WORK}/err.txt"
+}
+
+@test "Grep：path 是目錄或檔案、glob 寫死不是 md 的副檔名時放行（條件相同、結果相同）" {
+  run expect allow Grep \
+    '{"pattern": "ghp_", "path": "src", "glob": "**/*.py"}' \
+    '{"pattern": "ghp_", "path": "src/a.py", "glob": "**/*.py"}' \
+    '{"pattern": "ghp_", "glob": "*.sh"}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "Glob：**/*、**/*.md、**/*.sh 放行（只回傳路徑）" {
+  run expect allow Glob '{"pattern": "**/*"}' '{"pattern": "**/*.md"}' '{"pattern": "**/*.sh", "path": "script"}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "Bash 的遞迴搜尋：grep -r、--include 的 grep -r、rg、rg -t、find -exec grep 都被擋，下一步寫改用 Grep 工具" {
+  run expect_bash deny "${WORK}" \
+    "grep -r ghp_ ." \
+    "grep -r --include='*.py' x src" \
+    "rg ghp_" \
+    "rg -t py x" \
+    "find . -name '*' -exec grep ghp_ {} +"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+
+  bash_call "grep -r ghp_ ."
+  grep -q "${STEP_SEARCH}" "${WORK}/err.txt"
+}
+
+@test "Bash 的其他遞迴寫法也被擋：-R、連寫的 -rn、--recursive、-d recurse、xargs grep" {
+  run expect_bash deny "${WORK}" \
+    "grep -R x ." \
+    "grep -rn x src" \
+    "grep --recursive x ." \
+    "grep -d recurse x ." \
+    "git ls-files | xargs grep x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "Bash 搜尋指名的檔、-e 的值是 r 時不擋" {
+  run expect_bash allow "${WORK}" "grep -n x README.md" "grep -e r README.md" "find . -name '*.py'"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
+  run python3 -c '
+import json, sys
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", []))' "${REPO_ROOT}/.claude/settings.json"
+
+  [ "${output}" = True ]
+}
+
 # ── 讀不到輸入、讀不懂指令 ────────────────────────────────────────────────
 
 @test "讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構時擋下並寫出下一步" {
@@ -225,7 +341,7 @@ expect_bash() {
 
 # ── 接線與設定 ────────────────────────────────────────────────────────────
 
-@test ".claude/settings.json 以 PreToolUse 的 Bash matcher 呼叫 env-rules.sh" {
+@test ".claude/settings.json 以 PreToolUse 的 Bash matcher 與 Read|Edit|Write|Grep|Glob matcher 呼叫 env-rules.sh" {
   run python3 -c '
 import json, sys
 settings = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -236,10 +352,10 @@ for entry in settings.get("hooks", {}).get("PreToolUse", []):
             found.append(entry.get("matcher"))
 print(" ".join(sorted(found)))' "${REPO_ROOT}/.claude/settings.json"
 
-  [ "${output}" = "Bash" ]
+  [ "${output}" = "Bash Read|Edit|Write|Grep|Glob" ]
 }
 
-@test "照 .claude/settings.json 實際註冊的那一行命令執行，docker ps 回傳 ask" {
+@test "照 .claude/settings.json 實際註冊的那一行命令執行，docker ps 回傳 ask、Read 指名 token 檔被擋" {
   local line
   line="$(python3 -c '
 import json, sys
@@ -255,5 +371,7 @@ for entry in settings["hooks"]["PreToolUse"]:
 
   bash_call "docker ps"
   [ "$(verdict)" = ask ]
+  call Read '{"file_path": "../api token.md"}'
+  [ "$(verdict)" = deny ]
 }
 
