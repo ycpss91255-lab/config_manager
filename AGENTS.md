@@ -60,13 +60,22 @@
   即使是在驗收期間、由驗收發現引出來的也一樣。
   （這條是 2026-11-09 定的。之前驗收期間有兩個新功能只開了 PR、沒有 issue：#336 草稿記主人、
   #339 可選的請求紀錄。維護者決定不補開 issue，這個流程差異留在這裡。）
-- **開 issue 與發留言的條件**：細節見 `doc/agents/reporting.md`「開 issue 前的審稿」，hook 見 #413。
+- **開 issue 與發留言的條件**：細節見 `doc/agents/reporting.md`「開 issue 前的審稿」；由 `script/issue_draft.sh` 與 Claude Code 的
+  hook `script/claude-hooks/issue-rules.sh` 擋（#413，「每條規則由哪一層擋」第 30 列）。
   - **issue 草稿與 issue 本文的修改，交給協調工作階段另開的審稿工作階段審**：不經 Codex，寫的人也不自己審（協調工作階段自己寫的
-    也一樣）。逐點處理意見（採納就改、不採納附證據），改完再審，直到判「可以開」；開了或改了之後，在 issue 留言附最後一輪的判定與
-    適合公開的意見摘要；協調工作階段向維護者簡單說明審了哪些項目。
+    也一樣）。逐點處理意見（採納就改、不採納附證據），改完再審，直到判定通過：開 issue 判「可以開」、改本文判「可以發」；開了或改了
+    之後，在 issue 留言附最後一輪的判定與適合公開的意見摘要；協調工作階段向維護者簡單說明審了哪些項目。
     出處：2026-11-24 維護者原話「不用 Codex。你再開一個窗口審核」。「另開窗口」是另開審稿工作階段、寫的人不自己審、改本文也要審，
     是協調工作階段的理解。子工作階段用 SendMessage 請協調工作階段開審稿工作階段、不自己開；沒有協調工作階段時，寫草稿的工作階段
     請維護者另開：這兩點是執行細節（協調工作階段定的，不是原話）。
+  - **怎麼送（#413）**：寫的人把標題與內文寫進 `.issue-drafts/<名稱>/title.txt`、`body.md`，執行
+    `script/issue_draft.sh submit <名稱> --new`（改本文時 `--edit <編號>`），把它印出的那段話用 SendMessage 送給協調工作階段；審稿工作
+    階段照那段話審，把意見寫成檔、最後一個非空行寫判定，執行 `script/issue_draft.sh verdict <名稱> <雜湊> <意見檔>`；判定通過後，寫的人
+    或協調工作階段執行 `script/issue_draft.sh create <名稱>`（改本文是 `edit <名稱>`）。送出的是判定通過而且雜湊相同的那一份；執行
+    `submit` 與 `verdict` 的工作階段 id（`CLAUDE_CODE_SESSION_ID`）相同就不放行。直接 `gh issue create`、`gh issue edit` 改標題或本文、
+    `gh api` 開或改 issue，由 hook 擋。
+  - **勾帳本不算本文修改，不送審**：只把未勾的 `[ ]` 改成 `[x]`、行尾加 ` — <commit 主旨>`（`-`、`*`、`+` 開頭的勾選框都算），用
+    `script/issue_tick.sh <編號> <條件片段> <commit 主旨>`，hook 不擋它。（協調工作階段 2026-11-25 定的例行做法）
   - **判「可以開」就開，不必問維護者；不亂開、不開了又關。** 需要 owner 層級或架構決定的事，仍照上面「自己無法決定的事」等維護者
     決定，審稿不取代那個決定。（11/20 Q6 前半「開 issue 不用問我」；個人規則，見下面「工作階段的規則」）
   - **要發的留言**（回寫到其他 issue 的內容、對外的更正，例如 #407 回寫 #373 那則）由協調工作階段 `config_manager` 自己審一遍
@@ -165,7 +174,7 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 27 | 不碰 `cm_verify_*` 驗證環境 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 在清單上的入口加上指令裡的 `cm_verify` 時擋下（deny 優先於 ask） | 依連接埠連進驗證環境；不經清單上入口的寫法 |
 | 28 | 不讀 token 檔 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `permissions.deny` 的 `Read(//**/*token*.md)` | #412：`env-rules.sh` 擋 Read、Edit、Write、Grep、Glob 與 Bash 指名檔名含 token 的 `.md`；Grep 工具與 Bash 的遞迴搜尋一律擋（Grep 讀不讀得到範圍裡指向 token 檔的 symlink 判斷不了、實測做不到，照 Q8 擋，2026-11-25 改），下一步是用 Read 讀單一檔案 | 自寫的程式自己開檔；檔名不含 token 的 token 檔；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（hook 只看指令文字） |
 | 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 擋主 checkout 裡的 `git switch`、`git checkout <分支>`／`-b`，只放行確認是 linked worktree 的目錄；判斷不了目錄也擋 | 腳本裡、git 的別名、先 `export GIT_DIR` 這類別的寫法 |
-| 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定（「工作流程」的「開 issue 與發留言的條件」） | 只靠文字 | #413（未實作） | 整條 |
+| 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定；勾帳本不送審（「工作流程」的「開 issue 與發留言的條件」） | 沒有伺服器端的一層；本機由腳本與 Claude Code 的 hook 擋（hook 欄） | #413：`script/issue_draft.sh` 只送審稿判定通過、而且雜湊和目前草稿相同的那一份，執行 `submit` 與 `verdict` 的工作階段 id 相同就停；`script/claude-hooks/issue-rules.sh` 擋直接 `gh issue create`、`gh issue edit` 改標題或本文、`gh api` 開或改 issue、指令裡改寫工作階段 id、寫入或刪除 `.issue-drafts/<名稱>/snapshots/`；`issue-reminder.sh` 開了或改了之後提醒留言；勾帳本用 `script/issue_tick.sh` | 換一個工作階段送審或下判定（只比對 id，分不出內容是誰寫的）；改腳本、別處的同名腳本、整段是變數的路徑、自寫程式寫紀錄、`gh alias`；網頁上開或改、cloud 工作階段、`disableAllHooks`；審得好不好；開了之後的留言（只提醒） |
 | 31 | 判「可以開」就開，不必問維護者；不亂開、不開了又關；owner 層級或架構的決定仍等維護者 | 只靠文字 | 沒有 | 整條 |
 | 32 | 動工前先查證現況（main、`git log`、`doc/TEST-PLAN.md`） | 只靠文字 | 沒有 | 整條 |
 | 33 | 回報或提問前先讀 issue 最新內容；提案、定案、實驗結果分開；已定案不重問；提問前逐題對照全部定案 | 只靠文字 | 沒有 | 整條 |
