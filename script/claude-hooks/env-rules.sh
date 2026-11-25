@@ -9,6 +9,8 @@
 #   第 1 點  docker 先問：指令依 &&、||、;、| 分段（略過開頭的變數設定與 env、command、nohup 這類包裝），任一段是
 #            docker-entrypoints.txt 上的入口（docker、just docker、just test、會開 docker 的 repo 腳本，寫成 ./script/x.sh、
 #            script/x.sh、bash script/x.sh 都算）就回傳 ask。
+#   第 3 點  cm_verify：命中第 1 點的指令，文字裡同時出現 cm_verify（參數、-p 專案名、前面的變數設定都算）就擋（deny），
+#            deny 優先於 ask。
 #
 # **看不到、判斷不了的時候擋下並寫出下一步，不默默放寬保護**（Q8）。擋不住的寫在 doc/TEST-PLAN.md T19。
 #
@@ -45,8 +47,11 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # 指令文字裡沒有這些字，就不必解析（也不會因為讀不懂而擋下無關的指令）。
 MENTIONS = re.compile(r"(?i)docker|just|git|grep|rg|find|xargs|script|\.sh\b|token|cm_verify|source|sudo|doas|watch|parallel"
                       r"|caffeinate|stdbuf|unbuffer|(?<![A-Za-z0-9_-])(?:sh|bash|zsh|dash|ksh|eval)(?![A-Za-z0-9_-])")
+CM_VERIFY = re.compile(r"(?i)cm_verify")
 
 STEP_DOCKER = "照 AGENTS.md「工作階段的規則」，docker 指令先問維護者；驗收證據以 GitHub CI 為準"
+STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容器與 volume，doc/USER-VERIFICATION.md 的準備表）："
+               "不啟動、不停止、不重建、不改；要操作請維護者自己執行")
 STEP_SPLIT = "把指令拆開，每段的程式、參數與路徑寫成字面"
 STEP_INPUT = ("這支由 Claude Code 的 PreToolUse hook 呼叫；手動執行時，把 hook 會收到的 JSON（tool_name、tool_input）"
               "餵進標準輸入")
@@ -74,7 +79,7 @@ def ask(where):
 def finish():
     if DENY:
         err = sys.stderr
-        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問的入口清單讀不到，或是有 hook 判斷不了的地方。", file=err)
+        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境，或是有 hook 判斷不了的地方。", file=err)
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
@@ -247,6 +252,8 @@ def bash_rules(data):
     if items is None:
         return
     run_items(items, State(cwd))
+    if ASK and CM_VERIFY.search(command):
+        block(f"{'、'.join(ASK)}（指令裡有 cm_verify）", "會碰到 cm_verify_* 驗證環境", STEP_VERIFY)
 
 
 def main():

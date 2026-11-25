@@ -13,6 +13,7 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../../.." && pwd)"
   HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
+  STEP_VERIFY="不碰 cm_verify_* 驗證環境"
 }
 
 teardown() {
@@ -175,6 +176,31 @@ expect_bash() {
 
   [ "$(verdict)" = deny ]
   grep -q "下一步：" "${WORK}/err.txt"
+}
+
+# ── 第 3 點：cm_verify ────────────────────────────────────────────────────
+
+@test "docker compose -p cm_verify_x down 被擋（deny），不是 ask" {
+  bash_call "docker compose -p cm_verify_x down"
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "just docker stop cm_verify_x 被擋（deny）" {
+  bash_call "just docker stop cm_verify_x"
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "COMPOSE_PROJECT_NAME=cm_verify_x script/stop.sh 被擋（deny），下一步寫不碰 cm_verify_* 驗證環境" {
+  bash_call "COMPOSE_PROJECT_NAME=cm_verify_x script/stop.sh"
+
+  [ "$(verdict)" = deny ]
+  grep -q "${STEP_VERIFY}" "${WORK}/err.txt"
+}
+
+@test "不是入口的指令提到 cm_verify 不擋（依連接埠連進驗證環境這類擋不住）" {
+  [ "$(bash_verdict "echo cm_verify_x")" = allow ]
 }
 
 # ── 讀不到輸入、讀不懂指令 ────────────────────────────────────────────────
