@@ -2,7 +2,7 @@
 
 從 `README.md` 搬過來的開發者內容（#362）：README 只寫使用方法、功能與支援平台。
 
-各節內文照原文搬移，沒有改寫。只有「測試命令與命令模型」這個標題是新加的，底下是原本 README「開始」一節裡的 `just test` 那一行與命令模型那一段。
+各節內文照原文搬移，沒有改寫。新加的只有兩處：「測試命令與命令模型」這個標題（底下是原本 README「開始」一節裡的 `just test` 那一行與命令模型那一段），以及「檢查一律在容器內跑」最後一段本機 git hook 的說明（README 原本沒有這段）。
 
 ## 讀的順序
 
@@ -133,9 +133,9 @@ commit。
 **四個資料夾各自計算、各自擋**（`script/coverage_gate.sh`）——一個門檻同時守四個標準不同的
 區域，結果是守住最鬆的那個。
 
-**本機 git hook**（#391）：`just setup hooks` 打開、`just setup hooks-off` 關掉。登記的檢查（workflow 的
-`run-name`、標題任務編號限制）同樣在檢查映像裡跑，與 CI 的 `run-name`、`single-task` job 呼叫同一支腳本；
-`--no-verify` 會跳過本機 hook，CI 是最後一道。用法與界線見 [`doc/GIT-HOOKS.md`](GIT-HOOKS.md)。
+**本機 git hook**（#391、#406）：`just setup hooks` 打開、`just setup hooks-off` 關掉。登記的檢查在這台主機上
+直接跑、不經 docker，是提早攔的一層，不是證據；CI 在檢查映像裡跑同一支檢查，是最後一道。`--no-verify` 會跳過本機
+hook。登記了哪些檢查、用法與界線見 [`doc/GIT-HOOKS.md`](GIT-HOOKS.md)。
 
 ## 給後續維護者 / agent
 
