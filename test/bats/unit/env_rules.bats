@@ -18,6 +18,7 @@ setup() {
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
+  STEP_DESCRIPTION="用繁體中文寫指令說明"
 }
 
 teardown() {
@@ -434,6 +435,27 @@ print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", [])
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 
   [ ! -e "${WORK}/git-calls.log" ]
+}
+
+# ── 第 6 點：指令說明要中文 ───────────────────────────────────────────────
+
+@test "description 是英文時被擋，下一步寫用繁體中文寫指令說明" {
+  bash_call "ls" "${WORK}" "List files"
+
+  [ "$(verdict)" = deny ]
+  grep -q "${STEP_DESCRIPTION}" "${WORK}/err.txt"
+}
+
+@test "description 是中文時放行" {
+  bash_call "ls" "${WORK}" "列出檔案"
+
+  [ "$(verdict)" = allow ]
+}
+
+@test "沒有 description 時被擋" {
+  call Bash '{"command": "ls"}'
+
+  [ "$(verdict)" = deny ]
 }
 
 # ── 讀不到輸入、讀不懂指令 ────────────────────────────────────────────────

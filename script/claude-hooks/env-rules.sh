@@ -17,6 +17,7 @@
 #   第 5 點  主 checkout 不切分支：git switch、git checkout <分支>／-b 的目錄從 hook 輸入的 cwd 開始，依序疊上 cd 與
 #            git -C；從那裡往上找 .git，只有確認是 linked worktree（gitdir 指到的管理目錄有 commondir，共用目錄底下的
 #            worktrees/<名稱> 就是它）才放行。git checkout -- <檔> 不擋。
+#   第 6 點  指令說明要中文：Bash 的 description 沒有任何中日韓文字就擋（分不出繁簡）。
 #
 # **看不到、判斷不了的時候擋下並寫出下一步，不默默放寬保護**（Q8）。擋不住的寫在 doc/TEST-PLAN.md T19。
 #
@@ -54,6 +55,8 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 MENTIONS = re.compile(r"(?i)docker|just|git|grep|rg|find|xargs|script|\.sh\b|token|cm_verify|source|sudo|doas|watch|parallel"
                       r"|caffeinate|stdbuf|unbuffer|(?<![A-Za-z0-9_-])(?:sh|bash|zsh|dash|ksh|eval)(?![A-Za-z0-9_-])")
 CM_VERIFY = re.compile(r"(?i)cm_verify")
+CJK = re.compile("[\u3040-\u30ff\u3100-\u312f\u31a0-\u31bf\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"
+                 "\U00020000-\U0003134f]")  # 假名、注音、CJK 統一表意文字（含擴充 A、相容與擴充 B 以後）、韓文音節
 
 STEP_DOCKER = "照 AGENTS.md「工作階段的規則」，docker 指令先問維護者；驗收證據以 GitHub CI 為準"
 STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容器與 volume，doc/USER-VERIFICATION.md 的準備表）："
@@ -65,6 +68,7 @@ STEP_SEARCH = "改用 Grep 工具（glob 寫死副檔名、不是 .md，path 寫
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
+STEP_DESCRIPTION = "用繁體中文寫指令說明（Bash 工具的 description），再重送"
 STEP_SPLIT = "把指令拆開，每段的程式、參數與路徑寫成字面"
 STEP_INPUT = ("這支由 Claude Code 的 PreToolUse hook 呼叫；手動執行時，把 hook 會收到的 JSON（tool_name、tool_input、cwd）"
               "餵進標準輸入")
@@ -93,7 +97,7 @@ def finish():
     if DENY:
         err = sys.stderr
         print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境、不讀 token 檔、不在主 checkout "
-              "切換分支，或是有 hook 判斷不了的地方。", file=err)
+              "切換分支、指令說明用中文，或是有 hook 判斷不了的地方。", file=err)
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
@@ -511,10 +515,22 @@ def analyze_git(args, state, assignments):
         block(f"{where}（{directory}）", f"確認不了這裡是 linked worktree：{detail}", STEP_WORKTREE)
 
 
+# ── 第 6 點：指令說明要中文 ───────────────────────────────────────────────
+
+def description_rule(description):
+    if not isinstance(description, str) or not description.strip():
+        block("Bash 的 description", "沒有指令說明（AGENTS.md「工作階段的規則」：回覆一律用繁體中文，包括指令說明）",
+              STEP_DESCRIPTION)
+    elif not CJK.search(description):
+        block("Bash 的 description", "指令說明沒有任何中文字（AGENTS.md「工作階段的規則」：回覆一律用繁體中文，包括指令說明）",
+              STEP_DESCRIPTION)
+
+
 # ── 進入點 ────────────────────────────────────────────────────────────────
 
 def bash_rules(data):
     command, cwd = input_command(data, STEP_INPUT)
+    description_rule(data["tool_input"].get("description"))
     if not MENTIONS.search(command):
         return
     load_entries()
