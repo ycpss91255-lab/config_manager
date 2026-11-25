@@ -13,8 +13,7 @@ setup() {
   REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../../.." && pwd)"
   HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
-  STEP_SEARCH="改用 Grep 工具"
-  STEP_GREP="加上副檔名寫死、不是 .md 的 glob"
+  STEP_READ="要讀單一檔案就用 Read"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -267,7 +266,7 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
-@test "Grep：沒有 glob、glob 是 md 或不是寫死的副檔名、只給 type、path 不是 repo 裡的相對路徑的都被擋" {
+@test "Grep 工具一律擋：沒有 glob、glob 是 md 或不是寫死的副檔名、只給 type、path 不是 repo 裡的相對路徑的都被擋" {
   run expect deny Grep \
     '{"pattern": "ghp_"}' \
     '{"pattern": "ghp_", "glob": "**/*.md"}' \
@@ -284,14 +283,14 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
-@test "Grep 被擋時下一步寫加上副檔名寫死、不是 .md 的 glob" {
+@test "Grep 被擋時下一步寫要讀單一檔案就用 Read" {
   call Grep '{"pattern": "ghp_", "path": "src/a.py"}'
 
-  grep -qF "${STEP_GREP}" "${WORK}/err.txt"
+  grep -qF "${STEP_READ}" "${WORK}/err.txt"
 }
 
-@test "Grep：path 是目錄或檔案、glob 寫死不是 md 的副檔名時放行（條件相同、結果相同）" {
-  run expect allow Grep \
+@test "Grep 工具一律擋：原本放行的 glob 寫死不是 md 的副檔名、path 是 repo 裡的目錄或檔案也被擋（#412 本文 11/25 改，照 Q8）" {
+  run expect deny Grep \
     '{"pattern": "ghp_", "path": "src", "glob": "**/*.py"}' \
     '{"pattern": "ghp_", "path": "src/a.py", "glob": "**/*.py"}' \
     '{"pattern": "ghp_", "glob": "*.sh"}'
@@ -305,7 +304,7 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
-@test "Bash 的遞迴搜尋：grep -r、--include 的 grep -r、rg、rg -t、find -exec grep 都被擋，下一步寫改用 Grep 工具" {
+@test "Bash 的遞迴搜尋：grep -r、--include 的 grep -r、rg、rg -t、find -exec grep 都被擋，下一步寫要讀單一檔案就用 Read" {
   run expect_bash deny "${WORK}" \
     "grep -r ghp_ ." \
     "grep -r --include='*.py' x src" \
@@ -315,7 +314,19 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 
   bash_call "grep -r ghp_ ."
-  grep -qF "${STEP_SEARCH}" "${WORK}/err.txt"
+  grep -qF "${STEP_READ}" "${WORK}/err.txt"
+}
+
+@test "Bash 的遞迴搜尋與 Grep 被擋時，下一步不再叫人改用 Grep 工具" {
+  bash_call "rg ghp_"
+  cp "${WORK}/err.txt" "${WORK}/err-bash.txt"
+  call Grep '{"pattern": "ghp_", "glob": "*.py"}'
+
+  [ -s "${WORK}/err-bash.txt" ]
+  [ -s "${WORK}/err.txt" ]
+  run grep -qF "改用 Grep 工具" "${WORK}/err-bash.txt" "${WORK}/err.txt"
+
+  [ "${status}" -eq 1 ]
 }
 
 @test "Bash 的其他遞迴寫法也被擋：-R、連寫的 -rn、--recursive、-d recurse、xargs grep" {
