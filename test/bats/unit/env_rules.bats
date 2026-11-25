@@ -223,7 +223,7 @@ checkouts() {
   bash_call "COMPOSE_PROJECT_NAME=cm_verify_x script/stop.sh"
 
   [ "$(verdict)" = deny ]
-  grep -q "${STEP_VERIFY}" "${WORK}/err.txt"
+  grep -qF "${STEP_VERIFY}" "${WORK}/err.txt"
 }
 
 @test "不是入口的指令提到 cm_verify 不擋（依連接埠連進驗證環境這類擋不住）" {
@@ -287,7 +287,7 @@ checkouts() {
 @test "Grep 被擋時下一步寫加上副檔名寫死、不是 .md 的 glob" {
   call Grep '{"pattern": "ghp_", "path": "src/a.py"}'
 
-  grep -q "${STEP_GREP}" "${WORK}/err.txt"
+  grep -qF "${STEP_GREP}" "${WORK}/err.txt"
 }
 
 @test "Grep：path 是目錄或檔案、glob 寫死不是 md 的副檔名時放行（條件相同、結果相同）" {
@@ -315,7 +315,7 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 
   bash_call "grep -r ghp_ ."
-  grep -q "${STEP_SEARCH}" "${WORK}/err.txt"
+  grep -qF "${STEP_SEARCH}" "${WORK}/err.txt"
 }
 
 @test "Bash 的其他遞迴寫法也被擋：-R、連寫的 -rn、--recursive、-d recurse、xargs grep" {
@@ -351,7 +351,7 @@ print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", [])
   bash_call "git switch main" "${WORK}/main-checkout"
 
   [ "$(verdict)" = deny ]
-  grep -q "${STEP_WORKTREE}" "${WORK}/err.txt"
+  grep -qF "${STEP_WORKTREE}" "${WORK}/err.txt"
 }
 
 @test "cd 或 git -C 指到主 checkout 的切換分支被擋（-C 以 cd 之後的目錄解析）" {
@@ -370,7 +370,7 @@ print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", [])
   bash_call 'cd "$X" && git switch feat/x' "${WORK}/linked"
 
   [ "$(verdict)" = deny ]
-  grep -q "${STEP_DIR}" "${WORK}/err.txt"
+  grep -qF "${STEP_DIR}" "${WORK}/err.txt"
 }
 
 @test "子 shell 裡的 cd、cd -、git -C 的目錄來自變數時，切換分支被擋" {
@@ -443,7 +443,7 @@ print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", [])
   bash_call "ls" "${WORK}" "List files"
 
   [ "$(verdict)" = deny ]
-  grep -q "${STEP_DESCRIPTION}" "${WORK}/err.txt"
+  grep -qF "${STEP_DESCRIPTION}" "${WORK}/err.txt"
 }
 
 @test "description 是中文時放行" {
