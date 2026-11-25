@@ -66,7 +66,7 @@ just cfg import --source <檔案> --format <格式> --name <姓名> --email <ema
 2. **取得原始碼**：
 
    ```bash
-   git clone https://github.com/ycpss91255-research/config_manager.git
+   git clone https://github.com/ycpss91255-lab/config_manager.git
    cd config_manager
    ```
 
