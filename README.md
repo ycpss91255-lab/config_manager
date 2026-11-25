@@ -41,16 +41,17 @@ just cfg import --source <檔案> --format <格式> --name <姓名> --email <ema
 
 ## 支援平台
 
-這裡只寫**有什麼證據**；沒有證據的一律標「未驗證」，不寫成「已支援」。兩種證據分開看：
+這裡只寫**有什麼證據**；沒有證據的一律標「未驗證」，不寫成「已支援」。三種證據分開看：
 
-- **CI 自動化**：GitHub Actions 的 `ubuntu-latest` 上自動跑的檢查。它證明那些檢查在 CI 上通過，**不等於有人照這份 README 操作過**。
+- **CI 自動化**：GitHub Actions 的 `ubuntu-latest` 上每次自動跑的檢查。它證明那些檢查在 CI 上通過，**不等於有人照這份 README 操作過**。
+- **照 README 的自動化操作**：由程式照下面「安裝與快速開始」的步驟，從乾淨的目錄跑過，固定在某一個 commit。**不是真人操作**；之後步驟改了要重跑。紀錄在 [#348](https://github.com/ycpss91255-lab/config_manager/issues/348)。
 - **真人照文件操作**：有人照這份 README 從零走過一次，並留下紀錄。
 
-| 平台 | 網路模式 | CI 自動化 | 真人照文件操作 |
-|---|---|---|---|
-| Linux（Ubuntu） | `host`（預設） | 有：建映像；`host` 與 `bridge` 各實際起一次服務、確認只有本機連得到；開發模式從零起一次；備份與復原演練。都用隔離的專案名與暫存目錄，**不是照 README 的步驟** | 未驗證 |
-| macOS（Docker Desktop） | `bridge` | 沒有 | 未驗證 |
-| Windows（Docker Desktop） | `bridge` | 沒有 | 未驗證 |
+| 平台 | 網路模式 | CI 自動化 | 照 README 的自動化操作 | 真人照文件操作 |
+|---|---|---|---|---|
+| Linux（Ubuntu） | `host`（預設） | 有：建映像；`host` 與 `bridge` 各實際起一次服務、確認只有本機連得到；開發模式從零起一次；備份與復原演練。都用隔離的專案名與暫存目錄，**不是照 README 的步驟** | 有：GitHub 的 Ubuntu runner 上照第 1～5 步跑現場部署與開發模式，每一步都成功；頁面用指令取得，沒有開瀏覽器；第 6 步只讀了設定頁用的資料（2026-11-25，`103fa2a`） | 未驗證 |
+| macOS（Docker Desktop） | `bridge` | 沒有 | 有：一台 Mac（macOS 14.4、Docker Desktop）上照第 1～6 步跑兩次。第一次在第 4 步失敗：建置時映像自帶的一條規格等不到服務回應，原因還沒查明；第二次每一步都成功，含瀏覽器畫面與「設定」的保存（2026-11-25，`103fa2a`） | 未驗證 |
+| Windows（Docker Desktop） | `bridge` | 沒有 | 沒有 | 未驗證 |
 
 - Docker Desktop（macOS、Windows）上，預設的 `host` 網路不是主機的網路，要改用 bridge 網路的疊加檔。做法與限制見 [`doc/DEPLOYMENT.md` 的「bridge 網路」](doc/DEPLOYMENT.md#bridge-網路)。
 - Windows 的 WSL2 裡直接安裝 Docker Engine 的情況，沒有評估過。
@@ -58,7 +59,7 @@ just cfg import --source <檔案> --format <格式> --name <姓名> --email <ema
 
 ## 安裝與快速開始
 
-**下面的步驟還沒有人照著從零實跑過**（見上面「支援平台」）。
+**下面的步驟還沒有真人照著從零走過**；用程式照著跑過的平台與結果，見上面「支援平台」。
 
 1. **前置工具**：`git`、`docker`（要有 `docker compose`）、`just`。
    - macOS 內建的 bash 3.2 跑不動 `just docker …` 呼叫的腳本，要先裝 bash 4 以上（例如 `brew install bash`），並讓它排在 `PATH` 的前面。
@@ -104,7 +105,7 @@ just cfg import --source <檔案> --format <格式> --name <姓名> --email <ema
    服務會用到本機的 8080、8081 與固定的容器名稱；已經有別的東西在用時起不來。
 5. **開啟介面**：在這台機器的瀏覽器開 `http://localhost:8081`。前後端都只聽本機；要從別台機器操作、起不來時怎麼看原因，見 [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md)。
 6. **第一次納管之前**：以開發者身分到介面的「設定」確認「新納管預設主機名稱」（預填啟動時在這台機器上讀到的名稱）；還沒確認時不能納管。舊版用過的 `CM_HOSTNAME` 環境變數已經不用了，留著的話服務不會啟動，升級順序見 [`doc/DEPLOYMENT.md`](doc/DEPLOYMENT.md)。
-7. **介面怎麼操作**：頁面右上角的「說明」（`src/config_manager/web/help.html`）。
+7. **介面怎麼操作**：頁面上方工具列的「說明」，在「退出」的左邊（視窗窄時工具列會換行）；還沒輸入身分時，在身分表單的下方。內容是 `src/config_manager/web/help.html`。
 
 `just` 不帶參數會列出所有命令。
 
