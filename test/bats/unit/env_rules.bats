@@ -514,3 +514,9 @@ for entry in settings["hooks"]["PreToolUse"]:
   [ "$(verdict)" = deny ]
 }
 
+@test "設定和 hook 裡沒有本機絕對路徑或使用者名稱" {
+  run grep -nE '/Users/|/home/|/private/(var|tmp)/|/var/folders/|[A-Za-z]:\\\\Users|~[A-Za-z0-9_]+/' \
+    "${REPO_ROOT}/.claude/settings.json" "${REPO_ROOT}"/script/claude-hooks/*
+
+  [ "${status}" -eq 1 ]
+}
