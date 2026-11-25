@@ -1375,7 +1375,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/lint_exceptions.sh` | `test/bats/unit/lint_exceptions.bats` |
 | `script/lint_coverage_audit.sh` | `test/bats/unit/lint_coverage_audit.bats` |
 | `script/lint_derived.sh` | `test/bats/unit/lint_derived.bats` |
-| `script/check_file.sh` | `test/bats/unit/check_file.bats` |
+| `script/check_file.sh`、`.claude/settings.json` 的 PostToolUse（matcher `Edit\|Write`）接線（#412：hook 模式只提醒、不開 docker） | `test/bats/unit/check_file.bats` |
 | `script/test.sh` | `test/bats/unit/test.bats` |
 | `script/lint_checkpoints.sh` | `test/bats/unit/lint_checkpoints.bats` |
 | `script/lint_test_interfaces.sh` | `test/bats/unit/lint_test_interfaces.bats` |
@@ -1397,6 +1397,8 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/claude-hooks/pr-rules.sh`、`script/claude-hooks/shell-parse.sh`（和署名 hook 共用的指令解析與旗標清單）、`.claude/settings.json` 的 PreToolUse 接線（#408） | `test/bats/unit/pr_rules.bats` |
 | `script/claude-hooks/pr-ready-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#408） | `test/bats/unit/pr_ready_reminder.bats` |
 | `script/claude-hooks/host-push-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線（#409；git 的全域選項由 `shell-parse.sh` 的 `git_parts` 讀，和署名 hook 共用） | `test/bats/unit/host_push_rules.bats` |
+| `script/claude-hooks/env-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線與 `permissions.deny`（#412：docker 先問、不碰 `cm_verify_*`、不讀 token 檔、不在主 checkout 切分支、指令說明用中文） | `test/bats/unit/env_rules.bats` |
+| `script/claude-hooks/docker-entrypoints.txt`、`.claude/settings.json` 的 `permissions.ask`（#412：會執行 docker 的入口清單；規格遞迴掃 `script/` 底下的可執行檔） | `test/bats/unit/docker_entrypoints.bats` |
 | `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
 | `script/scrub_attribution.sh`（#410：清掉既有 PR 與 issue 說明裡的署名與 session 連結，樣式清單的第四個呼叫端） | `test/bats/unit/scrub_attribution.bats` |
 | `script/pr_binding.sh`、`script/closing-references.txt`（#407：共用的綁定判定與唯一一份關閉參照的擷取規格） | `test/bats/unit/pr_binding.bats` |
@@ -1871,6 +1873,22 @@ rebase、要求分支與 base 同步——每個 PR 都必然經歷至少一次 
 形狀跟閘門一樣危險：一個接錯線的單檔檢查什麼都不跑，而它每次都回 0——看起來與
 「檢查過了、乾淨」完全一樣。
 
+**#412 起 `check_file.sh` 分兩種模式。** 命令列模式（`script/check_file.sh <path>`）照舊：映像外轉進容器跑那幾項檢查
+（會開 docker，agent 執行前先問）。hook 模式（PostToolUse 不給參數、stdin 是 hook 的 JSON）**不跑檢查、不開 docker**，只把
+「這個檔適用哪幾項單檔檢查、要跑就執行命令列模式」寫成 JSON 的 `additionalContext` 交給 Claude。依據是維護者定案：Claude Code
+hook 不跑專案的檢查（Q1）、docker 先問（Q3）；先前這條路徑在映像已經建好時直接 `docker run`，不經 Bash，權限規則與 Bash hook
+都攔不到。它和檔頭原本寫的「把回饋提前」衝突，以定案為準：回饋改成由 agent 先問再跑。`.claude/settings.json` 的註冊不把
+stdout 轉向（先前的 `>&2` 讓 JSON 到不了 Claude）；這支中途失敗時由那一行的 `|| exit 2` 轉成 2，依 hooks 文件 PostToolUse 的 2
+會把 stderr 交給 Claude。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| 照 `.claude/settings.json` 實際註冊的那一行命令（`sh -c`、`CLAUDE_PROJECT_DIR`），餵 Edit `src/a.py`、Write `script/a.sh` 的 hook JSON；`PATH` 上放記錄呼叫的假 `docker`（`image inspect` 成功），拿掉 `CM_IN_TEST_IMAGE` | 假 `docker` 被呼叫 0 次；stdout 是帶 `additionalContext` 的 JSON，寫出那個檔適用的檢查與「下一步：要跑就執行 script/check_file.sh <路徑>（會開 docker，照 docker 先問）」；結束碼 0 |
+| hook 模式編輯不在派工表上的檔 | 沒有輸出，結束碼 0 |
+| hook 模式 stdin 不是 JSON | 結束碼 0，提醒裡寫明什麼都沒檢查 |
+| 命令列模式在映像外（同一支假 `docker`） | 轉進容器：`docker run … ./script/check_file.sh <路徑>` |
+| 命令列模式在映像裡 | ruff、`lint_messages`、shellcheck 照派工表執行，違規時非零結束；不在派工表上、repo 之外、不存在的路徑以 0 結束 |
+
 其餘 shell 腳本（容器 wrapper、`hooks/dispatch.sh`、多數 hook、`local/cfg/cfg.sh`）
 在 #74 逐支盤點後**轉為刻意的空格**，理由記在「覆蓋率審計」的該節，不再列為待辦。
 #385 把 `hooks/pre/run.sh` 與 `hooks/post/run.sh` 移回 T19（見下）。
@@ -2250,9 +2268,74 @@ fast-forward 限制，刪除照刪除模式的規則，tag 照 git 對 tag 的�
   `AGENTS.md`「工作流程」確認。
 - git 設定造成的額外推送：`push.followTags`（另外推 tag）、`push.recurseSubmodules`（另外推子模組；本 repo 11/23 沒有
   `.gitmodules`）、`remote.<name>.mirror`（推送時等同 `--mirror`，可能推到 main）。hook 不讀設定；推到 main 的最後一道是 main 的 ruleset。
-- Edit／Write 之後由 `check_file.sh` 自動開 docker 的路徑：不經 Bash，由 #412 處理。
+- Edit／Write 之後的 `check_file.sh`：不經 Bash；#412 起 hook 模式只提醒、不開 docker（見上面 `check_file.sh` 那段）。
 - git hook 觸發的檢查（`script/githook.sh` 與 `script/githook-checks/`）：由 git 執行、不經 Claude 的 Bash 工具（#409 的 Q5）。
 - cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
+
+**工作階段與環境規則的 Claude Code hook**（#412）。規則是 `AGENTS.md`「工作階段的規則」的五條：docker 指令先問、不碰
+`cm_verify_*` 驗證環境、不讀 token 檔、不切換主 checkout 的分支、指令說明用中文。這五條原本只靠文字；這支在本機先問或擋下，
+給清楚的下一步。由 `.claude/settings.json` 掛上（PreToolUse 的 matcher `Bash` 與 `Read|Edit|Write|Grep|Glob`）、在主機上跑，
+**只讀工具呼叫的輸入**（#412 的 Q1）：不呼叫 git、不跑專案程式、不掃檔案系統；讀的檔只有入口清單
+`script/claude-hooks/docker-entrypoints.txt`，與往上找到的 `.git` 和它指到的管理目錄。讀 shell 指令的那一段（cd 之後的目錄、
+git 的全域選項）和其他 hook 共用 `script/claude-hooks/shell-parse.sh`。判斷不了的時候擋下並寫出下一步（Q8）。規格把 hook 會收到
+的 JSON 餵進標準輸入，看判定：結束碼 2 是擋下（deny）；結束碼 0、標準輸出是 `permissionDecision` 為 `ask` 的 JSON 是先問；結束碼
+0、沒有輸出是放行。
+
+依 Claude Code 文件：多個 hook 的決定 deny 優先於 ask；權限規則依序判斷 deny、ask、allow；`permissions.ask` 規則在
+bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會照問文件沒寫，所以 docker 先問兩層都加（`permissions.ask` 與這支）。
+
+**`script/claude-hooks/env-rules.sh`**（PreToolUse）被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| docker 先問：`docker ps`、`cd x && ./script/test.sh --lint`、`bash script/run.sh`、`script/hooks/pre/run.sh`、`just docker run`、`just test`、`script/check_file.sh src/a.py` | 回傳 ask |
+| 其他寫法：放在 `&&`、`\|\|`、`;`、`\|` 後面、指令替換裡、變數設定或 `env` 後面，`"${REPO}"/script/test.sh`、`/usr/local/bin/docker`、`sudo docker`、`sh -c './script/stop.sh'`、`cd script && ./release.sh`、`just --justfile justfile test lint`、`just docker::run`、`docker-compose` | 回傳 ask |
+| `just setup hooks`、`just setup hooks-off`、`just`、`command -v docker`、提到 docker 的 grep 與 commit 訊息、`ls script/test.sh` | 放行 |
+| ask 的原因 | 指名入口，寫明 docker 先問 |
+| 讀不到入口清單 | 擋下並寫出下一步 |
+| cm_verify：`docker compose -p cm_verify_x down`、`just docker stop cm_verify_x`、`COMPOSE_PROJECT_NAME=cm_verify_x script/stop.sh` | 擋下（deny），不是 ask；下一步寫「不碰 cm_verify_* 驗證環境」 |
+| 不是入口的指令提到 cm_verify（`echo cm_verify_x`） | 放行 |
+| token 檔：Read `../api token.md`、`doc/API-Token.md`（不分大小寫），Edit、Write 指名的 token 檔，Bash `cat "~/x/My Token.md"`，Glob 的 `pattern` 是 `**/*token*.md` | 擋下 |
+| Read `doc/README.md`；Glob 的 `**/*`、`**/*.md`、`**/*.sh`（只回傳路徑） | 放行 |
+| Grep：沒有 `glob`；`glob` 是 `**/*.md`、`*.{py,md}`、`*.p[y]`、`!*.py`、`*.*`；只給 `type: py`；`path` 是 `..`、`/tmp`、`~/x`；`path: src/a.py` 但沒有 `glob` | 擋下，下一步寫「加上副檔名寫死、不是 .md 的 glob…」 |
+| Grep：`path: src`、`glob: **/*.py` 與 `path: src/a.py`、`glob: **/*.py`；沒有 `path` 的 `glob: *.sh` | 放行（`path` 指檔案還是目錄 hook 不區分，條件相同、結果相同） |
+| Bash 的遞迴搜尋：`grep -r ghp_ .`、`grep -r --include='*.py' x src`、`rg ghp_`、`rg -t py x`、`find . -name '*' -exec grep ghp_ {} +`，以及 `-R`、連寫的 `-rn`、`--recursive`、`-d recurse`、`xargs grep` | 擋下，下一步寫「改用 Grep 工具…」 |
+| Bash 搜尋指名的檔（`grep -n x README.md`、`grep -e r README.md`）、`find . -name '*.py'` | 放行 |
+| 主 checkout：`git switch main`；從 worktree `cd ../main-checkout && git checkout feat/x`、`git -C ../main-checkout switch feat/x`、`cd .. && git -C main-checkout switch feat/x`（`-C` 以 `cd` 之後的目錄解析）、`git -C .. -C main-checkout checkout -b feat/y` | 擋下，下一步寫「改到 worktree 裡做…」 |
+| 判斷不了目錄：`cd "$X" && git switch feat/x`、子 shell 裡的 `cd`、`cd -`、`git -C "$X"`、`GIT_DIR=…` | 擋下，下一步寫「改到 worktree 裡做，或寫明目錄…」 |
+| `.git` 檔指向的管理目錄沒有 `commondir`：submodule、分離 git 目錄的主 checkout | 擋下 |
+| 一般 clone、bare repo、分離 git 目錄建出來的 linked worktree 裡的 `git switch feat/x`；從 worktree 以 `git -C` 指到另一個 worktree | 放行 |
+| 主 checkout 裡的 `git checkout -- a.txt`、`git checkout main -- a.txt`、`git worktree add …`、`git status` | 放行 |
+| 不呼叫 git：PATH 上的 git 換成記錄呼叫的假程式 | 判定相同，假 git 被呼叫 0 次 |
+| 指令說明：`description` 是英文、沒有 `description` | 擋下，下一步寫「用繁體中文寫指令說明…」 |
+| `description` 是中文 | 放行 |
+| 讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構 | 擋下並寫出下一步 |
+| 其他工具的呼叫 | 放行 |
+| `.claude/settings.json` | PreToolUse 的 matcher `Bash` 與 `Read\|Edit\|Write\|Grep\|Glob` 各有一項呼叫這支；照註冊的那一行命令執行，`docker ps` 回傳 ask、Read 指名 token 檔被擋；`permissions.deny` 有 `Read(//**/*token*.md)` |
+| 設定和 hook 的檔 | 沒有本機絕對路徑或使用者名稱 |
+
+**`script/claude-hooks/docker-entrypoints.txt`**（入口清單）被觀察的行為。規格 `docker_entrypoints.bats` 遞迴掃 `script/` 底下的
+可執行檔，讀 shell 指令用 `shell-parse.sh` 的 Lexer（和 hook 同一份），所以註解、訊息字串、heredoc 內文裡的 docker 不算；「呼叫
+另一個入口」看指令的程式名稱（或 `bash`、`source` 的第一個參數）與變數設定的值裡寫的路徑，要登記的集合一直擴大到不再變：
+
+| 行為 | 通過條件 |
+|---|---|
+| `script/` 底下實際執行 docker 的可執行檔（先設環境變數再執行的行，例如 `script/hooks/post/build.sh:13`，也算） | 每一支都在清單裡 |
+| 清單上的每一支腳本 | 存在、可執行，而且掃得到它執行 docker 或呼叫另一個入口 |
+| 新增一支執行 docker 的可執行檔卻沒登記；一支可執行檔呼叫 `script/test.sh` 卻沒登記；呼叫沒登記的入口的可執行檔 | 被列成沒登記（規格失敗） |
+| `script/release.sh`（間接入口） | 在清單裡 |
+| 只供 `source` 載入的檔（沒有執行權限）；註解、訊息字串與 heredoc 內文裡提到的 docker | 不要求登記 |
+| `.claude/settings.json` 的 `permissions.ask` | 和清單一一對應：`script/` 開頭的寫成 `./script/x.sh *`、`script/x.sh *`、`bash script/x.sh *`，其他的寫成 `<入口> *` |
+
+**它擋不住的**：
+- 回覆的散文用什麼語言（不經過工具）；`description` 只看有沒有中日韓文字，分不出繁簡。
+- Python 腳本自己開 docker、不在清單上的間接呼叫（別名、清單外的包裝程式、名稱來自變數又沒有字面線索的程式）；不是 shell 的可執行檔不在掃描範圍。
+- 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）。
+- 只用 Grep 的 `type` 或沒有副檔名限制的搜尋會被擋，要改寫法。
+- Grep 的起點或搜尋範圍裡指向 token 檔的 symlink：hook 只看輸入分不出來，靠 `Read(//**/*token*.md)` 的 deny 規則（文件寫明對 Grep、Glob 是 best-effort）；桌面 app 的實測記在 PR 的「轉成可合併前核對」第 4 項。
+- 依連接埠連進驗證環境；不經清單上入口碰驗證環境的寫法。
+- 主 checkout 裡用別的寫法切分支（腳本裡、git 的別名、先 `export GIT_DIR`）。
+- Codex、cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
 
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
@@ -2401,7 +2484,7 @@ fast-forward 限制，刪除照刪除模式的規則，tag 照 git 對 tag 的�
 | `script/lint_exceptions.sh` | T19（§0.4 第 1 條：捕捉具名例外後只吞掉，#112） | 已落地 |
 | `script/lint_coverage_audit.sh` | T19（這張表自己立的規則，表與樹對不起來就停下，#117） | 已落地 |
 | `script/lint_derived.sh` | T19（文件不得抄一份可推導的東西，#98） | 已落地 |
-| `script/check_file.sh` | T19（單檔檢查的派工規則） | 已落地 |
+| `script/check_file.sh` | T19（單檔檢查的派工規則；hook 模式只提醒、不開 docker，#412） | 已落地 |
 | `script/test.sh` | T19（缺工具不得靜默通過，#72；worktree 的 git 目錄要掛進容器，#103；分段執行與映像的快取，#358） | 已落地 |
 | `script/coverage_gate.sh` | T19（每層門檻各自獨立、指名的只有轉紅的那一層） | 已落地 |
 | `script/coverage_badge.sh` | T19（badge 只由版本與四層的數字決定、沒量完整的數字不畫，#354） | 已落地 |
@@ -2423,6 +2506,7 @@ fast-forward 限制，刪除照刪除模式的規則，tag 照 git 對 tag 的�
 | `script/claude-hooks/pr-rules.sh` | T19（Claude Code 的 PreToolUse hook：agent 不合併、PR 描述要綁一張本 repo 的 issue、一律先開草稿，#408） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/pr-ready-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：PR 轉成可合併時提醒檢查全過會被 CI 合併，#408） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/host-push-rules.sh` | T19（Claude Code 的 PreToolUse hook：檢查工具不在主機直接跑、git push 寫明完整的目的地 ref、不推到 main、force push 只用 --force-with-lease，#409） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/env-rules.sh` | T19（Claude Code 的 PreToolUse hook：docker 先問、不碰 `cm_verify_*`、不讀 token 檔、不在主 checkout 切分支、指令說明用中文，#412） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/scrub_attribution.sh` | T19（清掉既有 PR 與 issue 說明裡的 Claude 署名與 session 連結，#410） | 已落地（由執行者手動執行，不由 `test.sh --lint` 或 CI 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
