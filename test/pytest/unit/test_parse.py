@@ -32,6 +32,15 @@ def test_yaml_round_trips_byte_identical_with_comments_and_quotes():
     assert dump(parse(text, "yaml")) == text
 
 
+# #400 例 1：二進位整數、帶底線的浮點、日期各一行（#334 的 spike 量到底線浮點被改寫）。
+_UNDERSCORED_FLOAT_YAML = "a: 0b101\nb: 1_000.5\nc: 2001-12-14\n"
+
+
+def test_yaml_with_an_underscored_float_round_trips_byte_identical():
+    # 沒改任何值：`1_000.5` 照原文寫回，不能變成 `01000.5`。
+    assert dump(parse(_UNDERSCORED_FLOAT_YAML, "yaml")) == _UNDERSCORED_FLOAT_YAML
+
+
 def test_yaml_syntax_error_raises_with_line_number():
     with pytest.raises(SyntaxParse) as caught:
         parse("key: [未閉合\n", "yaml")
