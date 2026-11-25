@@ -15,6 +15,8 @@ setup() {
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
   STEP_SEARCH="改用 Grep 工具"
   STEP_GREP="加上副檔名寫死、不是 .md 的 glob"
+  STEP_WORKTREE="改到 worktree 裡做"
+  STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
 }
 
@@ -95,6 +97,28 @@ expect_bash() {
     fi
   done
   return "${failed}"
+}
+
+# commit <repo>：在 <repo> 留一個空的 commit（只有規格自己呼叫 git；hook 不呼叫）。
+commit() {
+  git -C "$1" -c user.name=spec -c user.email=spec@example.invalid commit -q --allow-empty -m init
+}
+
+# checkouts：在 ${WORK} 建主 checkout、它的 linked worktree、bare repo 與它的 worktree、分離 git 目錄的主 checkout 與它的
+# worktree、主 checkout 裡的 submodule。
+checkouts() {
+  git init -q "${WORK}/main-checkout"
+  commit "${WORK}/main-checkout"
+  git -C "${WORK}/main-checkout" worktree add -q -b feat/linked "${WORK}/linked"
+  git init -q --bare "${WORK}/bare.git"
+  git -C "${WORK}/main-checkout" push -q "${WORK}/bare.git" HEAD:refs/heads/main
+  git -C "${WORK}/bare.git" worktree add -q "${WORK}/bare-wt" main
+  git init -q --separate-git-dir="${WORK}/separate.git" "${WORK}/separate"
+  commit "${WORK}/separate"
+  git -C "${WORK}/separate" worktree add -q -b feat/sep "${WORK}/separate-wt"
+  git init -q "${WORK}/lib"
+  commit "${WORK}/lib"
+  git -C "${WORK}/main-checkout" -c protocol.file.allow=always submodule add -q "${WORK}/lib" sub
 }
 
 # ── 第 1 點：docker 先問 ──────────────────────────────────────────────────
@@ -317,6 +341,99 @@ settings = json.load(open(sys.argv[1], encoding="utf-8"))
 print("Read(//**/*token*.md)" in settings.get("permissions", {}).get("deny", []))' "${REPO_ROOT}/.claude/settings.json"
 
   [ "${output}" = True ]
+}
+
+# ── 第 5 點：主 checkout 不切分支 ─────────────────────────────────────────
+
+@test "主 checkout 裡的 git switch main 被擋，下一步寫改到 worktree 裡做" {
+  checkouts
+  bash_call "git switch main" "${WORK}/main-checkout"
+
+  [ "$(verdict)" = deny ]
+  grep -q "${STEP_WORKTREE}" "${WORK}/err.txt"
+}
+
+@test "cd 或 git -C 指到主 checkout 的切換分支被擋（-C 以 cd 之後的目錄解析）" {
+  checkouts
+  run expect_bash deny "${WORK}/linked" \
+    "cd ../main-checkout && git checkout feat/x" \
+    "git -C ../main-checkout switch feat/x" \
+    "cd .. && git -C main-checkout switch feat/x" \
+    "git -C .. -C main-checkout checkout -b feat/y"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "判斷不了目錄的 cd \"\$X\" && git switch feat/x 被擋，下一步寫改到 worktree 裡做，或寫明目錄" {
+  checkouts
+  bash_call 'cd "$X" && git switch feat/x' "${WORK}/linked"
+
+  [ "$(verdict)" = deny ]
+  grep -q "${STEP_DIR}" "${WORK}/err.txt"
+}
+
+@test "子 shell 裡的 cd、cd -、git -C 的目錄來自變數時，切換分支被擋" {
+  checkouts
+  run expect_bash deny "${WORK}/linked" \
+    "(cd ../linked && git switch feat/x)" \
+    "cd - && git switch feat/x" \
+    "git -C \"\$X\" switch feat/x" \
+    "GIT_DIR=../main-checkout/.git git switch feat/x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test ".git 檔指向的管理目錄沒有 commondir（submodule）的目錄裡，git switch feat/x 被擋" {
+  checkouts
+  bash_call "git switch feat/x" "${WORK}/main-checkout/sub"
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "分離 git 目錄的主 checkout（.git 是檔，管理目錄沒有 commondir）裡切換分支被擋" {
+  checkouts
+  bash_call "git switch feat/x" "${WORK}/separate"
+
+  [ "$(verdict)" = deny ]
+}
+
+@test "一般 clone、bare repo、分離 git 目錄建出來的 linked worktree 裡 git switch feat/x 放行" {
+  checkouts
+  run expect_bash allow "${WORK}/linked" "git switch feat/x"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash allow "${WORK}/bare-wt" "git switch feat/x"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash allow "${WORK}/separate-wt" "git switch feat/x"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "主 checkout 裡 git checkout -- a.txt、git worktree add、git status 放行" {
+  checkouts
+  run expect_bash allow "${WORK}/main-checkout" \
+    "git checkout -- a.txt" \
+    "git checkout main -- a.txt" \
+    "git worktree add -b feat/z ../z origin/main" \
+    "git status"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "從 worktree 用 git -C 指到另一個 worktree 切換分支放行" {
+  checkouts
+  [ "$(bash_verdict "git -C ../bare-wt switch feat/x" "${WORK}/linked")" = allow ]
+}
+
+@test "不呼叫 git：PATH 上的 git 換成記錄呼叫的假程式，判定相同、假 git 被呼叫 0 次" {
+  checkouts
+  mkdir -p "${WORK}/fake"
+  printf '#!/bin/sh\necho "$*" >>"%s"\nexit 1\n' "${WORK}/git-calls.log" >"${WORK}/fake/git"
+  chmod +x "${WORK}/fake/git"
+  PATH="${WORK}/fake:${PATH}" run expect_bash deny "${WORK}/main-checkout" "git switch main"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  PATH="${WORK}/fake:${PATH}" run expect_bash allow "${WORK}/linked" "git switch feat/x"
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+
+  [ ! -e "${WORK}/git-calls.log" ]
 }
 
 # ── 讀不到輸入、讀不懂指令 ────────────────────────────────────────────────

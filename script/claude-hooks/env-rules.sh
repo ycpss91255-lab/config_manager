@@ -4,7 +4,7 @@
 # AGENTS.md「工作階段的規則」；原本只靠文字，這支在本機擋下或先問，給清楚的下一步。
 #
 # 由 .claude/settings.json 掛上，在主機上跑。**只讀工具呼叫的輸入**（#412 的 Q1）：不呼叫 git、不跑專案程式與測試、不掃
-# 檔案系統。讀的檔只有這支旁邊的入口清單 docker-entrypoints.txt。
+# 檔案系統。讀的檔只有這支旁邊的入口清單 docker-entrypoints.txt，與第 5 點往上找到的 .git（檔案或資料夾）和它指到的管理目錄。
 #
 #   第 1 點  docker 先問：指令依 &&、||、;、| 分段（略過開頭的變數設定與 env、command、nohup 這類包裝），任一段是
 #            docker-entrypoints.txt 上的入口（docker、just docker、just test、會開 docker 的 repo 腳本，寫成 ./script/x.sh、
@@ -14,6 +14,9 @@
 #   第 4 點  token 檔：Read／Edit／Write 的 file_path、Grep 的 path 與 glob、Glob 的 path 與 pattern、Bash 指令裡的每個字，
 #            檔名含 token 的 .md（不分大小寫）就擋。Grep 只在 glob 寫死副檔名、不是 md，而且 path 是 repo 裡的相對路徑時
 #            放行；Bash 的遞迴搜尋（grep -r／-R、rg、find … -exec grep、xargs grep）一律擋。
+#   第 5 點  主 checkout 不切分支：git switch、git checkout <分支>／-b 的目錄從 hook 輸入的 cwd 開始，依序疊上 cd 與
+#            git -C；從那裡往上找 .git，只有確認是 linked worktree（gitdir 指到的管理目錄有 commondir，共用目錄底下的
+#            worktrees/<名稱> 就是它）才放行。git checkout -- <檔> 不擋。
 #
 # **看不到、判斷不了的時候擋下並寫出下一步，不默默放寬保護**（Q8）。擋不住的寫在 doc/TEST-PLAN.md T19。
 #
@@ -21,7 +24,7 @@
 # Claude Code 會放行，所以 python 中途失敗也一律轉成 2，.claude/settings.json 那一行也以 `|| exit 2` 接住這支不在的情況。
 #
 # 這支刻意只用 bash 3.2 也有的寫法：hook 由使用者的環境啟動，PATH 上的 bash 不一定是 brew 的那一個（macOS 內建的是 3.2）。
-# 判定都在 python 裡；讀指令的那一段（含 cd 之後的目錄）在 shell-parse.sh，和其他 hook 共用。
+# 判定都在 python 裡；讀指令的那一段（含 cd 之後的目錄、git 的全域選項）在 shell-parse.sh，和其他 hook 共用。
 set -u
 
 here="${BASH_SOURCE[0]%/*}"
@@ -59,14 +62,17 @@ STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段
 STEP_GREP = ("加上副檔名寫死、不是 .md 的 glob（例如 **/*.py），path 寫 repo 裡的相對路徑（不含 ..、不以 / 或 ~ 開頭）；"
              "要讀單一檔案就用 Read")
 STEP_SEARCH = "改用 Grep 工具（glob 寫死副檔名、不是 .md，path 寫 repo 裡的相對路徑）"
+STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
+                 "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
+STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
 STEP_SPLIT = "把指令拆開，每段的程式、參數與路徑寫成字面"
 STEP_INPUT = ("這支由 Claude Code 的 PreToolUse hook 呼叫；手動執行時，把 hook 會收到的 JSON（tool_name、tool_input、cwd）"
               "餵進標準輸入")
 STEP_ENTRIES = "確認 script/claude-hooks/docker-entrypoints.txt 在這個簽出裡、讀得到，再重送"
 
 # shell-parse.sh 的分析程序用的兩個說法
-COMMANDS = "docker／grep 這類指令"
-UNPARSABLE = "判斷不了它會不會開 docker 或讀 token 檔"
+COMMANDS = "docker／git／grep 這類指令"
+UNPARSABLE = "判斷不了它會不會開 docker、讀 token 檔或在主 checkout 切分支"
 
 DENY = []  # (位置, 原因, 下一步)
 ASK = []   # 位置
@@ -86,7 +92,8 @@ def ask(where):
 def finish():
     if DENY:
         err = sys.stderr
-        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境、不讀 token 檔，或是有 hook 判斷不了的地方。", file=err)
+        print(f"{TAG}: 擋下這次的工具呼叫（#412）：docker 先問、不碰 cm_verify_* 驗證環境、不讀 token 檔、不在主 checkout "
+              "切換分支，或是有 hook 判斷不了的地方。", file=err)
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
@@ -171,6 +178,8 @@ def dispatch(program, args, state, assignments, words):
             sourced = entry_script(args[0], state)
             if sourced is not None:
                 ask(f"{program} {sourced}")
+    elif program == "git":
+        analyze_git(args, state, assignments)
     elif program in GREPS:
         analyze_grep(program, args)
     elif program == "rg":
@@ -211,6 +220,8 @@ def analyze_runner(runner, args, state):
                       "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
             else:
                 analyze_grep(name, args[i + 1:])
+        elif name == "git" and runner in ("sudo", "doas"):
+            analyze_git(args[i + 1:], state if state is not None else State(None), [])
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -372,6 +383,132 @@ def glob_rules(tool_input):
         value = tool_input.get(field)
         if isinstance(value, str) and token_named(value):
             block(f"Glob 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
+
+
+# ── 第 5 點：主 checkout 不切分支 ─────────────────────────────────────────
+
+# 子 shell（( … )、$( … )）、bash -c 與 eval 裡的 cd：shell-parse.sh 不把它的目錄帶回外層，這裡把它當成判斷不了（Q8）。
+SHELL_DEPTH = [0]
+NESTED_CD = [False]
+
+
+def run_items(items, state):  # 取代 shell-parse.sh 的同名函式：多記子 shell 的層數
+    saved = []
+    SHELL_DEPTH[0] += 1
+    try:
+        for item in items:
+            if item == PUSH:
+                saved.append(state.cwd)
+                SHELL_DEPTH[0] += 1
+            elif item == POP:
+                if saved:
+                    state.cwd = saved.pop()
+                    SHELL_DEPTH[0] -= 1
+            else:
+                analyze(item, state)
+    finally:
+        SHELL_DEPTH[0] -= 1 + len(saved)
+
+
+_shared_change_directory = change_directory
+
+
+def change_directory(args, state):  # 取代 shell-parse.sh 的同名函式：子 shell 裡的 cd 另外記下
+    _shared_change_directory(args, state)
+    if SHELL_DEPTH[0] > 1:
+        NESTED_CD[0] = True
+
+
+SWITCHERS = ("switch", "checkout")
+NEW_BRANCH = ("-b", "-B", "--orphan", "--detach")
+
+
+def checkout_switches(rest):
+    """git checkout 的參數會不會切換分支：沒有參數，或有 -- 而且前面沒有 -b、-B、--orphan、--detach、shell 展開，才算只還原檔案。"""
+    if not rest:
+        return False
+    texts = [w.text if w.static else None for w in rest]
+    if "--" not in texts:
+        return True
+    before = texts[:texts.index("--")]
+    return any(t is None or t in NEW_BRANCH or t.startswith("--orphan=") for t in before)
+
+
+def linked_worktree(dotgit):
+    """(是不是 linked worktree, 確認不了時的原因)。照 git worktree 文件核對 gitdir、commondir 與 worktrees/<名稱> 三者。"""
+    try:
+        with open(dotgit, encoding="utf-8") as handle:
+            first = handle.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return False, f"讀不到 {dotgit}"
+    if not first.startswith("gitdir:"):
+        return False, f"{dotgit} 不是 gitdir: <路徑> 的格式"
+    admin = os.path.realpath(os.path.join(os.path.dirname(dotgit), first[len("gitdir:"):].strip()))
+    try:
+        with open(os.path.join(admin, "commondir"), encoding="utf-8") as handle:
+            common = handle.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return False, f"{dotgit} 指到的管理目錄 {admin} 裡沒有 commondir（例如 submodule、分離的 git 目錄建的主 checkout）"
+    common = os.path.realpath(os.path.join(admin, common))
+    if os.path.realpath(os.path.join(common, "worktrees", os.path.basename(admin))) != admin:
+        return False, f"管理目錄 {admin} 不是共用目錄 {common} 底下的 worktrees/<名稱>"
+    return True, ""
+
+
+def checkout_kind(directory):
+    """("main" | "linked" | "unknown", 說明)：從 directory 往上找 .git，只讀檔案、不呼叫 git（Q1）。"""
+    path = os.path.realpath(directory)
+    if not os.path.isdir(path):
+        return "unknown", f"目錄 {directory} 不存在"
+    while True:
+        dotgit = os.path.join(path, ".git")
+        if os.path.isdir(dotgit):
+            return "main", f"{dotgit} 是資料夾"
+        if os.path.isfile(dotgit):
+            linked, why = linked_worktree(dotgit)
+            return ("linked", "") if linked else ("unknown", why)
+        if os.path.lexists(dotgit):
+            return "unknown", f"{dotgit} 不是檔案也不是資料夾"
+        parent = os.path.dirname(path)
+        if parent == path:
+            return "unknown", f"從 {directory} 往上找不到 .git"
+        path = parent
+
+
+def analyze_git(args, state, assignments):
+    options, subcommand, rest = git_parts(args)
+    if subcommand is None:
+        if any(a.static and a.text in SWITCHERS for a in rest):
+            block("git", "git 的選項或子指令來自 shell 展開，判斷不了是不是在主 checkout 切換分支", STEP_DIR)
+        return
+    if subcommand not in SWITCHERS or (subcommand == "checkout" and not checkout_switches(rest)):
+        return
+    where = f"git {subcommand}"
+    for name in assignments:
+        if name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"):
+            block(f"{where} 前面的 {name}=", "這個環境變數會改 git 找 repo 的位置，判斷不了在哪個簽出切換", STEP_DIR)
+            return
+    directory = state.cwd
+    for name, value in options:
+        if name in ("--git-dir", "--work-tree"):
+            block(f"{where} 的 {name}", "會改 git 找 repo 的位置，判斷不了在哪個簽出切換", STEP_DIR)
+            return
+        if name == "-C":
+            if value is None or not value.static:
+                block(f"{where} 的 -C", "目錄來自 shell 展開或沒寫，判斷不了在哪個簽出切換", STEP_DIR)
+                return
+            if value.text:
+                directory = resolve(directory, value.text)
+    if directory is None or NESTED_CD[0]:
+        block(where, "這條指令先切換到 hook 判斷不了的目錄（cd 的目錄來自 shell 展開、cd -、popd、子 shell 或 bash -c 裡的 cd，"
+              "或 hook 的輸入沒有 cwd）", STEP_DIR)
+        return
+    kind, detail = checkout_kind(directory)
+    if kind == "main":
+        block(f"{where}（{directory}）", f"這是主 checkout（{detail}）：主 checkout 不切換分支（AGENTS.md「工作階段的規則」）",
+              STEP_WORKTREE)
+    elif kind == "unknown":
+        block(f"{where}（{directory}）", f"確認不了這裡是 linked worktree：{detail}", STEP_WORKTREE)
 
 
 # ── 進入點 ────────────────────────────────────────────────────────────────
