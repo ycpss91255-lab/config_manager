@@ -90,7 +90,8 @@
 
 **回報與提問**
 
-- **回覆一律用繁體中文**，包括進度句和指令說明。（個人規則；Q3）
+- **回覆一律用繁體中文**，包括進度句和指令說明。Bash 工具的指令說明沒有中文字由 hook 擋
+  （`script/claude-hooks/env-rules.sh`，#412）；回覆本身沒有工具擋。（個人規則；Q3）
 - **白話、一步一步教；第一行是結果或下一步；清單最多 5 項。** 見 `doc/agents/reporting.md`「回報給維護者的寫法」。（個人規則；協調工作階段的指示；Q3）
 - **措辭要精確**：事實與推論分開、歸因有佐證、用精確名稱、不默默放寬保護等 6 條，逐條見 `doc/agents/reporting.md`「精確措辭」。（個人規則）
 - **設計選擇分三類**：例行實作選擇自己決定並寫依據、測試介面看是不是新的觀察位置、驗收規則變更要有依據或維護者確認，逐條見
@@ -104,12 +105,16 @@
 **工作階段與環境**
 
 - **每個 PR、issue 開一個獨立的工作階段處理與驗證。**（個人規則；Q3）
-- **不切換主 checkout 的分支**：新工作從最新的 `origin/main` 另開 worktree，在 worktree 裡做。（協調工作階段的指示；Q3）
+- **不切換主 checkout 的分支**：新工作從最新的 `origin/main` 另開 worktree，在 worktree 裡做。主 checkout 裡的 `git switch`、
+  `git checkout <分支>` 由 hook 擋（`env-rules.sh`，#412）。（協調工作階段的指示；Q3）
 - **docker 指令先問**，包括會開 docker 的 repo 腳本與 recipe（`./script/test.sh`、`just test`、`just docker …`）；本機跑
-  `./script/test.sh` 也先問（含 `CM_TEST_LOCAL=1`）；驗收證據以 GitHub CI 為準，本機的結果不算（「品質閘門」）。（個人規則；Q3）
+  `./script/test.sh` 也先問（含 `CM_TEST_LOCAL=1`）；驗收證據以 GitHub CI 為準，本機的結果不算（「品質閘門」）。由 `.claude/settings.json`
+  的 `permissions.ask` 與 hook 先問，入口清單是 `script/claude-hooks/docker-entrypoints.txt`；編輯後自動跑的 `script/check_file.sh`
+  只提醒、不開 docker（#412）。（個人規則；Q3）
 - **不碰 `cm_verify_*` 驗證環境**：那是維護者人工驗收用的容器與 volume（`doc/USER-VERIFICATION.md` 的準備表），不啟動、不停止、
-  不重建、不改。（個人規則；Q3）
-- **不讀 token 檔**：存放存取 token 的檔（例如維護者機器上檔名含 token 的筆記）不讀、不搜尋到、不複製。（協調工作階段的指示；Q3）
+  不重建、不改。會開 docker 的入口加上指令裡的 `cm_verify` 由 hook 擋（#412）。（個人規則；Q3）
+- **不讀 token 檔**：存放存取 token 的檔（例如維護者機器上檔名含 token 的筆記）不讀、不搜尋到、不複製。由 hook 與
+  `Read(//**/*token*.md)` 的 deny 規則擋；Bash 的遞迴搜尋（`grep -r`、`rg`…）改用 Grep 工具（#412）。（協調工作階段的指示；Q3）
 - **動工前先查證現況**：issue 內容常過期（已被後來的 PR 做掉卻沒關、引用的行號已經移動），先查 main、`git log`、`doc/TEST-PLAN.md`
   再動手。（個人規則）
 
@@ -148,17 +153,17 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 16 | `git push` 寫完整的目的地 ref | 沒有（推到 main 由 ruleset 擋） | #409：`host-push-rules.sh` 只認寫死的 `refs/heads/<名稱>`／`refs/tags/<名稱>`；沒寫 refspec、沒寫 `:<dst>`、matching、萬用字元、清單外的旗標都擋 | git 設定造成的額外推送（同第 1 列） |
 | 17 | force push 只用 `--force-with-lease`，只推自己的分支 | ruleset 擋 main；其他分支沒有 | #409：`host-push-rules.sh` 擋 `--force`、`-f`、`+` 開頭的 refspec、`--no-force-with-lease` | 「只推自己的分支」：hook 不知道分支是誰的，由執行的人照上面「工作流程」確認 |
 | 18 | commit、PR、issue 與留言不帶 Claude 署名與 session 連結（#405） | CI：`attribution`（PR 的 commit 訊息、標題與描述，列進 `ci-rollup`） | repo 的 `attribution` 設定、Claude Code 的 PreToolUse hook、本機 commit-msg 檢查（已實作，#405） | 網頁上直接寫的內容、留言（見上面「Commit 訊息」） |
-| 19 | 檢查工具一律在容器裡跑，不在主機直接跑（`CM_TEST_LOCAL=1 ./script/test.sh` 是明文的例外；下面「品質閘門」） | CI 在容器裡跑，主機的結果不算證據 | #409：`host-push-rules.sh` 擋 Claude Code 經 Bash 在主機直接跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint` 與 `python -m pytest\|ruff\|mypy\|pylint` | 間接呼叫（`python -c`、`uv run`、自寫腳本、別名）；Edit／Write 之後 `check_file.sh` 自動開 docker 的路徑（#412）；cloud 工作階段 |
+| 19 | 檢查工具一律在容器裡跑，不在主機直接跑（`CM_TEST_LOCAL=1 ./script/test.sh` 是明文的例外；下面「品質閘門」） | CI 在容器裡跑，主機的結果不算證據 | #409：`host-push-rules.sh` 擋 Claude Code 經 Bash 在主機直接跑 `pytest`、`ruff`、`mypy`、`pylint`、`bats`、`shellcheck`、`hadolint`、`actionlint` 與 `python -m pytest\|ruff\|mypy\|pylint` | 間接呼叫（`python -c`、`uv run`、自寫腳本、別名）；cloud 工作階段（Edit／Write 之後的 `check_file.sh` 自 #412 起只提醒、不跑檢查） |
 | 20 | 本機 git hook 登記的檢查在主機上直接跑、不經 docker；那是提早攔的一層，不是證據（#406；「品質閘門」） | CI：在容器裡跑同一組檢查，是最後一道 | 本機 git hook：`.githooks/` → `script/githook.sh`（`just setup hooks` 之後）；有登記的檢查而主機缺 bash 4 以上、python3 或 git 時擋下 | `--no-verify`、沒打開 hook 的 clone；主機工具和映像不同造成的差異 |
 | 21 | 既有的 PR 與 issue 說明裡的署名與 session 連結要清掉，不改 git 歷史（#410） | 沒有：一次性的清理（新寫的署名由第 18 列擋） | 不需要；清理用 `script/scrub_attribution.sh`（試跑列出、`--apply` 寫回），執行紀錄在 `doc/review/2026-11-24-attribution-scrub.md` | 說明的編輯紀錄、留言、commit 訊息；`--apply` 比對和寫入之間的空檔裡別人的修改 |
-| 22 | 回覆一律用繁體中文，包括進度句和指令說明（「工作階段的規則」） | 只靠文字 | #412（未實作；只管指令說明） | 回覆本身 |
+| 22 | 回覆一律用繁體中文，包括進度句和指令說明（「工作階段的規則」） | 指令說明：沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄）；回覆本身只靠文字 | #412：`script/claude-hooks/env-rules.sh` 擋 Bash 的 `description` 沒有中日韓文字 | 回覆本身；分不出繁簡；cloud 工作階段、`disableAllHooks` |
 | 23 | 白話、一步一步；第一行是結果或下一步；清單最多 5 項 | 只靠文字 | 沒有 | 整條 |
 | 24 | 每個 PR、issue 開獨立的工作階段處理與驗證 | 只靠文字 | 沒有 | 整條 |
-| 25 | docker 指令先問；本機跑 `./script/test.sh` 先問 | 只靠文字 | #412（未實作） | 整條；Edit／Write `src/**/*.py`、`script/**/*.sh` 之後，檢查映像已經建好時 `check_file.sh` 會自己開 docker（第 19 列） |
+| 25 | docker 指令先問；本機跑 `./script/test.sh` 先問 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `.claude/settings.json` 的 `permissions.ask` | #412：`env-rules.sh` 對 `script/claude-hooks/docker-entrypoints.txt` 上的入口回傳 ask（規格遞迴掃 `script/` 核對清單）；`check_file.sh` 的 hook 模式只提醒、不開 docker | Python 腳本自己開 docker、不在清單上的間接呼叫；cloud 工作階段、`disableAllHooks` |
 | 26 | 驗收證據以 GitHub CI 為準 | 合併只認 CI：ruleset 要 `ci-rollup`（第 3 列） | 不需要 | 回報與驗收紀錄裡把本機結果當證據 |
-| 27 | 不碰 `cm_verify_*` 驗證環境 | 只靠文字 | #412（未實作） | 整條 |
-| 28 | 不讀 token 檔 | 只靠文字 | #412（未實作） | 整條 |
-| 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 只靠文字 | #412（未實作） | 整條 |
+| 27 | 不碰 `cm_verify_*` 驗證環境 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 在清單上的入口加上指令裡的 `cm_verify` 時擋下（deny 優先於 ask） | 依連接埠連進驗證環境；不經清單上入口的寫法 |
+| 28 | 不讀 token 檔 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `permissions.deny` 的 `Read(//**/*token*.md)` | #412：`env-rules.sh` 擋 Read、Edit、Write、Grep、Glob 與 Bash 指名檔名含 token 的 `.md`；Grep 只放行副檔名寫死、不是 md 的 glob；Bash 的遞迴搜尋一律擋 | 自寫的程式自己開檔；檔名不含 token 的 token 檔；Grep 範圍裡的 symlink（靠 deny 規則，文件寫明 best-effort） |
+| 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 擋主 checkout 裡的 `git switch`、`git checkout <分支>`／`-b`，只放行確認是 linked worktree 的目錄；判斷不了目錄也擋 | 腳本裡、git 的別名、先 `export GIT_DIR` 這類別的寫法 |
 | 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定（「工作流程」的「開 issue 與發留言的條件」） | 只靠文字 | #413（未實作） | 整條 |
 | 31 | 判「可以開」就開，不必問維護者；不亂開、不開了又關；owner 層級或架構的決定仍等維護者 | 只靠文字 | 沒有 | 整條 |
 | 32 | 動工前先查證現況（main、`git log`、`doc/TEST-PLAN.md`） | 只靠文字 | 沒有 | 整條 |
