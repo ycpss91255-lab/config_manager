@@ -59,7 +59,7 @@
 
 - **已定案**：服務以非 root（uid 1000）執行，不改動主機系統（#360）。
 - **現在可評估的方案**：
-  - 目標目錄要在 Docker Desktop 的分享範圍內；macOS 上預設的 `/opt/robot/config` 不在範圍內，要用 `CM_TARGET_ROOT` 指到 `/Users` 底下之類的路徑（要放在分享範圍內這一點，寫在 #348 補上的 README 快速開始第 3 步；#348 合併之前，README 沒有這一步）。
+  - 目標目錄要在 Docker Desktop 的分享範圍內；macOS 上預設的 `/opt/robot/config` 不在範圍內，要用 `CM_TARGET_ROOT` 指到 `/Users` 底下之類的路徑（要放在分享範圍內這一點，寫在 README 快速開始第 3 步，#348）。
   - Windows：容器內外同一條路徑的設計，與 Windows 的路徑形式不相容（推論）。選項是限定在 WSL 的路徑下使用，或讓掛載改成「主機路徑 → 固定的容器內路徑」。後者會改到白名單與清單檔記的路徑，影響範圍大，要另外決定。
 - **需要實驗回答的問題**：
   - Docker Desktop 上，uid 1000 寫出的檔案在主機上的擁有者與權限。
@@ -104,8 +104,8 @@
 
 | 範圍 | 判斷 | 條件 |
 |---|---|---|
-| Linux（`host`） | 維持為主要平台 | CI 全部跑在這裡；真人照 README 操作仍未驗證（#348） |
-| macOS、Windows 透過 Docker Desktop | 要支援，以「照文件可用」為目標 | 依據：維護者在 #348 定案 README 的驗收要涵蓋 Docker Desktop 的 bridge 路徑。先走現有的 bridge 路徑並在 #348 實跑；路徑與權限照第 3 項處理；Windows 的路徑形式要另外決定 |
+| Linux（`host`） | 維持為主要平台 | CI 全部跑在這裡；照 README 步驟的自動化操作在 GitHub 的 runner 上做過（#348）；真人照 README 操作仍未驗證 |
+| macOS、Windows 透過 Docker Desktop | 要支援，以「照文件可用」為目標 | 依據：維護者在 #348 定案 README 的驗收要涵蓋 Docker Desktop 的 bridge 路徑。先走現有的 bridge 路徑：#348 在一台 Mac 上照 README 自動化實跑兩次，一次在建置時失敗、原因未查明，一次走完；Windows 沒有實跑；路徑與權限照第 3 項處理；Windows 的路徑形式要另外決定 |
 | 入口在 macOS、Windows 上原生執行（不需要 bash） | 要，依定案以 Rust 單一執行檔做 | 第 1 項的實驗；CI 依第 4 項只測入口本身 |
 | 服務本體不經容器、直接在 macOS／Windows 上執行 | 不在這次評估的範圍 | 現行與已定案的方向都是容器部署 |
 
