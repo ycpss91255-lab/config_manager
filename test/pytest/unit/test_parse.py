@@ -4,6 +4,8 @@
 字串餵進去，不碰磁碟。
 """
 
+from datetime import date, datetime
+
 import pytest
 
 from config_manager.core import errors as core_errors
@@ -77,6 +79,40 @@ _MERGE_SPEC_EXAMPLE_YAML = (
 def test_the_yaml_merge_spec_example_round_trips_byte_identical():
     # 沒改任何值：`---`、流式對照表裡的空白、`<< :` 的寫法、註解的位置都照原文寫回。
     assert dump(parse(_MERGE_SPEC_EXAMPLE_YAML, "yaml")) == _MERGE_SPEC_EXAMPLE_YAML
+
+
+def _typed(value):
+    """值連同種類，逐層：Python 裡 `1 == 1.0 == True`，只比值分不出型別有沒有變。
+    ruamel 的 ScalarInt、ScalarFloat 各算 int、float；bool 是 int 的子類別、datetime 是
+    date 的子類別，要先比。"""
+    if isinstance(value, dict):
+        return {key: _typed(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_typed(item) for item in value]
+    kinds = (bool, int, float, datetime, date, str)
+    return next((kind for kind in kinds if isinstance(value, kind)), type(value)), value
+
+
+_CENTER_BIG = {"x": 1, "y": 2, "r": 10, "label": "center/big"}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 0b101 是整數 5；1_000.5 是浮點 1000.5；2001-12-14 是日期（#400 的現象）。
+        (_UNDERSCORED_FLOAT_YAML, {"a": 5, "b": 1000.5, "c": date(2001, 12, 14)}),
+        # 四個 anchor 各自的值，之後四種寫法都等於 CENTER 加 BIG 加 label（merge 規格）。
+        (
+            _MERGE_SPEC_EXAMPLE_YAML,
+            [{"x": 1, "y": 2}, {"x": 0, "y": 2}, {"r": 10}, {"r": 1}] + [_CENTER_BIG] * 4,
+        ),
+    ],
+    ids=["underscored-float", "merge-spec-example"],
+)
+def test_yaml_written_without_edits_reads_back_the_same_values_and_types(text, expected):
+    read_back = values(parse(dump(parse(text, "yaml")), "yaml"))
+
+    assert _typed(read_back) == _typed(expected)
 
 
 def test_yaml_syntax_error_raises_with_line_number():
