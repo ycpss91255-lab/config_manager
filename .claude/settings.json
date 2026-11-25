@@ -108,7 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/script/check_file.sh >&2 || exit 2",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/check_file.sh || exit 2",
             "timeout": 30
           }
         ]
