@@ -12,8 +12,9 @@
 #   第 3 點  cm_verify：命中第 1 點的指令，文字裡同時出現 cm_verify（參數、-p 專案名、前面的變數設定都算）就擋（deny），
 #            deny 優先於 ask。
 #   第 4 點  token 檔：Read／Edit／Write 的 file_path、Grep 的 path 與 glob、Glob 的 path 與 pattern、Bash 指令裡的每個字，
-#            檔名含 token 的 .md（不分大小寫）就擋。Grep 只在 glob 寫死副檔名、不是 md，而且 path 是 repo 裡的相對路徑時
-#            放行；Bash 的遞迴搜尋（grep -r／-R、rg、find … -exec grep、xargs grep）一律擋。
+#            檔名含 token 的 .md（不分大小寫）就擋。Grep 工具一律擋（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的
+#            symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 擋）；Bash 的遞迴搜尋（grep -r／-R、rg、
+#            find … -exec grep、xargs grep）也一律擋。兩者的下一步都是「要讀單一檔案就用 Read」。
 #   第 5 點  主 checkout 不切分支：git switch、git checkout <分支>／-b 的目錄從 hook 輸入的 cwd 開始，依序疊上 cd 與
 #            git -C；從那裡往上找 .git，只有確認是 linked worktree（gitdir 指到的管理目錄有 commondir，共用目錄底下的
 #            worktrees/<名稱> 就是它）才放行。git checkout -- <檔> 不擋。
@@ -62,9 +63,8 @@ STEP_DOCKER = "照 AGENTS.md「工作階段的規則」，docker 指令先問維
 STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容器與 volume，doc/USER-VERIFICATION.md 的準備表）："
                "不啟動、不停止、不重建、不改；要操作請維護者自己執行")
 STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段的規則」）；需要 token 的步驟請維護者自己執行"
-STEP_GREP = ("加上副檔名寫死、不是 .md 的 glob（例如 **/*.py），path 寫 repo 裡的相對路徑（不含 ..、不以 / 或 ~ 開頭）；"
-             "要讀單一檔案就用 Read")
-STEP_SEARCH = "改用 Grep 工具（glob 寫死副檔名、不是 .md，path 寫 repo 裡的相對路徑）"
+STEP_READ = ("要讀單一檔案就用 Read（Read 有 Read(//**/*token*.md) 的 deny 規則，照 symlink 解析到的檔比對）；"
+             "Grep 工具與 Bash 的遞迴搜尋一律擋（#412 調整需求第 4 點）")
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -188,7 +188,7 @@ def dispatch(program, args, state, assignments, words):
         analyze_grep(program, args)
     elif program == "rg":
         block("rg", "rg 會讀搜尋範圍裡每個檔的內容；它的設定檔、跟不跟隨 symlink 都會改變實際的搜尋範圍，只看指令判斷不了"
-              "會不會讀到 token 檔", STEP_SEARCH)
+              "會不會讀到 token 檔", STEP_READ)
     elif program == "find":
         analyze_find(args, state)
     elif program in RUNNERS:
@@ -221,7 +221,7 @@ def analyze_runner(runner, args, state):
         elif name in GREPS or name == "rg":
             if runner in ("xargs", "find") or name == "rg":
                 block(f"{runner or '這條指令'} 執行的 {name}", f"{name} 交給別的程式執行，搜尋哪些檔在執行時才決定，"
-                      "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
+                      "hook 判斷不了會不會讀到 token 檔", STEP_READ)
             else:
                 analyze_grep(name, args[i + 1:])
         elif name == "git" and runner in ("sudo", "doas"):
@@ -335,7 +335,7 @@ def analyze_grep(program, args):
                     break
         if recursive is not None:
             block(f"{program} {recursive}", "遞迴搜尋會讀目錄底下每個檔的內容；Read 的 deny 規則不涵蓋這類指令，grep 跟不跟隨 "
-                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_SEARCH)
+                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_READ)
             return
         i += 1
 
@@ -353,32 +353,15 @@ def file_rules(tool, tool_input):
         block(f"{tool} 的 file_path {path}", "這是檔名含 token 的 .md，存放存取 token 的檔不讀、不改", STEP_TOKEN)
 
 
-def grep_scope(path, glob):
-    """(放行與否, 原因)：glob 寫死副檔名、不是 md，path 是 repo 裡的相對路徑（沒給就是目前的目錄）。只看輸入（Q1）。"""
-    if not isinstance(glob, str) or not glob:
-        return False, "沒有 glob：Grep 會讀搜尋範圍裡每個檔的內容（type 參數不算：文件沒有定義各類型包含哪些副檔名）"
-    name = glob.rsplit("/", 1)[-1]
-    match = re.match(r"^[^\\!{}\[\]]*\.([A-Za-z0-9_+-]+)$", name)
-    if glob.startswith("!") or any(c in glob for c in "{}[]") or match is None:
-        return False, f"glob {glob} 的副檔名不是寫死的（含 {{…}}、[…]、! 或副檔名本身有萬用字元的不算）"
-    if match.group(1).lower() == "md":
-        return False, f"glob {glob} 的副檔名是 md"
-    if path is not None and path != "":
-        if not isinstance(path, str):
-            return False, "path 不是字串"
-        if path.startswith(("/", "~")) or ".." in path.split("/"):
-            return False, f"path {path} 不是 repo 裡的相對路徑（含 ..、以 / 或 ~ 開頭的不算）"
-    return True, ""
-
-
 def grep_rules(tool_input):
+    """Grep 工具一律擋（#412 本文 2026-11-25 改）：搜尋範圍裡指向 token 檔的 symlink，hook 只看輸入分不出來；Grep 遞迴時跟不跟隨
+    symlink、deny 規則對 Grep 是 best-effort，實測又做不到，照 Q8 擋。path 指檔案還是目錄 hook 不區分（Q1），所以單一檔案也擋。"""
     for field in ("path", "glob"):
         value = tool_input.get(field)
         if isinstance(value, str) and token_named(value):
             block(f"Grep 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
-    allowed, why = grep_scope(tool_input.get("path"), tool_input.get("glob"))
-    if not allowed:
-        block("Grep", f"{why}；搜尋範圍裡可能有 token 檔", STEP_GREP)
+    block("Grep", "Grep 會讀搜尋範圍裡每個檔的內容；範圍裡指向 token 檔的 symlink，hook 只看輸入分不出來，Grep 跟不跟隨 symlink "
+          "文件沒寫、deny 規則對 Grep 只是 best-effort", STEP_READ)
 
 
 def glob_rules(tool_input):
