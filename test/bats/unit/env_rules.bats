@@ -1,0 +1,233 @@
+#!/usr/bin/env bats
+#
+# script/claude-hooks/env-rules.sh —— Claude Code 的 PreToolUse hook：docker 先問、不碰 cm_verify_* 驗證環境、不讀 token 檔、
+# 不在主 checkout 切換分支、指令說明用中文（T19、#412）。
+#
+# hook 在主機上跑，只讀工具呼叫的輸入（#412 的 Q1）：不呼叫 git、不跑專案程式、不掃檔案系統；讀的檔只有入口清單與往上找到的
+# .git。看不到、判斷不了的時候擋下並寫出下一步（Q8）。
+#
+# 測的是公開行為：照 Claude Code 給 hook 的形狀把 JSON 餵進標準輸入，看判定——結束碼 2 是擋下（deny），結束碼 0 而標準輸出
+# 是 permissionDecision 為 ask 的 JSON 是先問，結束碼 0 而沒有輸出是放行。
+
+setup() {
+  REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../../.." && pwd)"
+  HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
+  WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
+}
+
+teardown() {
+  rm -rf "${WORK}"
+}
+
+# call <工具> <tool_input 的 JSON> [<cwd>]：照 Claude Code 給 PreToolUse hook 的形狀餵給 hook。結束碼放 code，
+# 標準輸出、標準錯誤各自放在 out.txt、err.txt。
+call() {
+  python3 -c '
+import json, sys
+print(json.dumps({
+    "session_id": "spec",
+    "hook_event_name": "PreToolUse",
+    "tool_name": sys.argv[1],
+    "tool_input": json.loads(sys.argv[2]),
+    "cwd": sys.argv[3],
+}))' "$1" "$2" "${3:-${WORK}}" >"${WORK}/input.json"
+  code=0
+  "${HOOK}" <"${WORK}/input.json" >"${WORK}/out.txt" 2>"${WORK}/err.txt" || code=$?
+}
+
+# verdict：上一次 call 的判定，印 deny、ask、allow，或 other:<結束碼>。
+verdict() {
+  if [ "${code}" -eq 2 ]; then
+    echo deny
+  elif [ "${code}" -eq 0 ] && [ ! -s "${WORK}/out.txt" ]; then
+    echo allow
+  elif [ "${code}" -eq 0 ] && python3 -c '
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))["hookSpecificOutput"]
+sys.exit(0 if data["hookEventName"] == "PreToolUse" and data["permissionDecision"] == "ask" else 1)' "${WORK}/out.txt"; then
+    echo ask
+  else
+    echo "other:${code}"
+  fi
+}
+
+# bash_call <指令> [<cwd>] [<description>]：Bash 工具的呼叫，description 預設是中文。
+bash_call() {
+  local input
+  input="$(python3 -c 'import json, sys; print(json.dumps({"command": sys.argv[1], "description": sys.argv[2]}))' \
+    "$1" "${3-在 worktree 裡跑規格}")"
+  call Bash "${input}" "${2:-${WORK}}"
+}
+
+# bash_verdict <指令> [<cwd>]：印出那條 Bash 指令的判定。
+bash_verdict() {
+  bash_call "$@"
+  verdict
+}
+
+# expect <判定> <工具> <tool_input 的 JSON>…：每一個呼叫的判定都是 <判定>；不是的印出來並失敗。
+expect() {
+  local want="$1" tool="$2" input got failed=0
+  shift 2
+  for input in "$@"; do
+    call "${tool}" "${input}"
+    got="$(verdict)"
+    if [ "${got}" != "${want}" ]; then
+      printf '%s %s => %s（預期 %s）\n' "${tool}" "${input}" "${got}" "${want}"
+      failed=1
+    fi
+  done
+  return "${failed}"
+}
+
+# expect_bash <判定> <cwd> <指令>…：同上，Bash 工具。
+expect_bash() {
+  local want="$1" cwd="$2" command got failed=0
+  shift 2
+  for command in "$@"; do
+    got="$(bash_verdict "${command}" "${cwd}")"
+    if [ "${got}" != "${want}" ]; then
+      printf '%s => %s（預期 %s）\n' "${command}" "${got}" "${want}"
+      failed=1
+    fi
+  done
+  return "${failed}"
+}
+
+# ── 第 1 點：docker 先問 ──────────────────────────────────────────────────
+
+@test "docker ps 回傳 ask" {
+  [ "$(bash_verdict "docker ps")" = ask ]
+}
+
+@test "cd x && ./script/test.sh --lint 回傳 ask" {
+  [ "$(bash_verdict "cd x && ./script/test.sh --lint")" = ask ]
+}
+
+@test "bash script/run.sh 回傳 ask" {
+  [ "$(bash_verdict "bash script/run.sh")" = ask ]
+}
+
+@test "子目錄裡的入口 script/hooks/pre/run.sh 回傳 ask" {
+  [ "$(bash_verdict "script/hooks/pre/run.sh")" = ask ]
+}
+
+@test "just docker run 回傳 ask" {
+  [ "$(bash_verdict "just docker run")" = ask ]
+}
+
+@test "just test 回傳 ask" {
+  [ "$(bash_verdict "just test")" = ask ]
+}
+
+@test "命令列模式的 script/check_file.sh src/a.py 回傳 ask" {
+  [ "$(bash_verdict "script/check_file.sh src/a.py")" = ask ]
+}
+
+@test "just setup hooks 不問" {
+  [ "$(bash_verdict "just setup hooks")" = allow ]
+}
+
+@test "放在 &&、||、;、| 後面、指令替換裡、變數設定後面、以路徑或變數前綴呼叫的入口都回傳 ask" {
+  run expect_bash ask "${WORK}" \
+    "ls && docker ps" \
+    "false || docker compose ps" \
+    "ls; just docker build" \
+    "printf x | docker load" \
+    "echo \"\$(docker ps -q)\"" \
+    "CM_TEST_LOCAL=1 ./script/test.sh" \
+    "env CM_TEST_LOCAL=1 script/test.sh --lint" \
+    "\"\${REPO}\"/script/test.sh --lint" \
+    "/usr/local/bin/docker ps" \
+    "sudo docker ps" \
+    "sh -c './script/stop.sh'" \
+    "cd script && ./release.sh v1.0.0" \
+    "just --justfile justfile test lint" \
+    "just docker::run" \
+    "docker-compose ps"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "ask 的原因指名入口、寫明 docker 先問" {
+  bash_call "just test"
+
+  grep -q '"permissionDecisionReason": "env-rules: docker 先問（#412）：.*（just test）' "${WORK}/out.txt"
+}
+
+@test "不執行 docker 的指令不問：command -v docker、提到 docker 的 grep 與 commit 訊息、just 的其他 recipe" {
+  run expect_bash allow "${WORK}" \
+    "command -v docker" \
+    "grep -n docker README.md" \
+    "git commit -m 'docker ps 先問'" \
+    "just" \
+    "just setup hooks-off" \
+    "ls script/test.sh"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "讀不到入口清單時擋下並寫出下一步" {
+  mkdir -p "${WORK}/hooks"
+  cp "${HOOK}" "${REPO_ROOT}/script/claude-hooks/shell-parse.sh" "${WORK}/hooks/"
+  HOOK="${WORK}/hooks/env-rules.sh"
+  bash_call "docker ps"
+
+  [ "$(verdict)" = deny ]
+  grep -q "下一步：" "${WORK}/err.txt"
+}
+
+# ── 讀不到輸入、讀不懂指令 ────────────────────────────────────────────────
+
+@test "讀不到 hook 輸入（空的、不是 JSON）、讀不懂指令的結構時擋下並寫出下一步" {
+  code=0
+  "${HOOK}" </dev/null >"${WORK}/out.txt" 2>"${WORK}/err.txt" || code=$?
+  [ "$(verdict)" = deny ]
+  printf 'not json' | "${HOOK}" >"${WORK}/out.txt" 2>"${WORK}/err.txt" || code=$?
+  [ "$(verdict)" = deny ]
+
+  bash_call "docker ps 'unterminated"
+  [ "$(verdict)" = deny ]
+  grep -q "下一步：" "${WORK}/err.txt"
+}
+
+@test "其他工具的呼叫放行" {
+  call WebFetch '{"url": "https://example.invalid/token.md", "prompt": "x"}'
+
+  [ "$(verdict)" = allow ]
+}
+
+# ── 接線與設定 ────────────────────────────────────────────────────────────
+
+@test ".claude/settings.json 以 PreToolUse 的 Bash matcher 呼叫 env-rules.sh" {
+  run python3 -c '
+import json, sys
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+found = []
+for entry in settings.get("hooks", {}).get("PreToolUse", []):
+    for hook in entry.get("hooks", []):
+        if hook.get("type") == "command" and "script/claude-hooks/env-rules.sh" in hook.get("command", ""):
+            found.append(entry.get("matcher"))
+print(" ".join(sorted(found)))' "${REPO_ROOT}/.claude/settings.json"
+
+  [ "${output}" = "Bash" ]
+}
+
+@test "照 .claude/settings.json 實際註冊的那一行命令執行，docker ps 回傳 ask" {
+  local line
+  line="$(python3 -c '
+import json, sys
+settings = json.load(open(sys.argv[1], encoding="utf-8"))
+for entry in settings["hooks"]["PreToolUse"]:
+    for hook in entry["hooks"]:
+        if "env-rules.sh" in hook["command"]:
+            print(hook["command"])
+            raise SystemExit' "${REPO_ROOT}/.claude/settings.json")"
+  printf '#!/bin/sh\nCLAUDE_PROJECT_DIR="%s" exec sh -c '"'"'%s'"'"'\n' "${REPO_ROOT}" "${line}" >"${WORK}/registered.sh"
+  chmod +x "${WORK}/registered.sh"
+  HOOK="${WORK}/registered.sh"
+
+  bash_call "docker ps"
+  [ "$(verdict)" = ask ]
+}
+

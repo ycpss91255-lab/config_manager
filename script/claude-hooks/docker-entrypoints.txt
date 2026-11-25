@@ -1,0 +1,39 @@
+# 會執行 docker 的入口（#412 調整需求第 1 點）。一行一個，# 之後是註解。
+#
+# 誰讀它：
+#   - script/claude-hooks/env-rules.sh（PreToolUse，matcher Bash）：用 &&、||、;、| 串起來的指令，任一段是這裡的入口
+#     就回傳 ask（docker 先問）；指令文字裡同時出現 cm_verify 就擋（deny）。
+#   - .claude/settings.json 的 permissions.ask：每一行對應幾條 Bash 規則（寫法見 test/bats/unit/docker_entrypoints.bats）。
+#     `script/` 開頭的寫成 ./script/x.sh、script/x.sh、bash script/x.sh 三種；其他的寫成 `<這一行> *`。
+#   - test/bats/unit/docker_entrypoints.bats：遞迴掃 script/ 底下的可執行檔，實際執行 docker 的（含先設環境變數再執行
+#     的行）與呼叫這裡另一個入口的，都要登記在這裡；只供 source 載入的檔（不可執行）不登記。
+#
+# 盤點以 main 51566cd（#411 合併）為準；595a2ee 的 18 支是 11/20 的紀錄，script/githook.sh 由 #406 改成不經 docker，
+# 不再列。
+
+# 程式與 recipe
+docker
+docker-compose
+just docker
+just test
+
+# 直接執行 docker 的可執行檔
+script/acceptance.sh
+script/backup.sh
+script/backup_drill.sh
+script/build.sh
+script/check_file.sh
+script/ci_bystanders.sh
+script/compose_smoke.sh
+script/exec.sh
+script/prune.sh
+script/restore.sh
+script/run.sh
+script/stop.sh
+script/test.sh
+script/hooks/post/build.sh
+script/hooks/post/run.sh
+script/hooks/pre/run.sh
+
+# 呼叫上面另一個入口的可執行檔
+script/release.sh

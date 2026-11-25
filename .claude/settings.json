@@ -5,6 +5,65 @@
     "pr": "",
     "sessionUrl": false
   },
+  "permissions": {
+    "ask": [
+      "Bash(docker *)",
+      "Bash(docker-compose *)",
+      "Bash(just docker *)",
+      "Bash(just test *)",
+      "Bash(./script/acceptance.sh *)",
+      "Bash(script/acceptance.sh *)",
+      "Bash(bash script/acceptance.sh *)",
+      "Bash(./script/backup.sh *)",
+      "Bash(script/backup.sh *)",
+      "Bash(bash script/backup.sh *)",
+      "Bash(./script/backup_drill.sh *)",
+      "Bash(script/backup_drill.sh *)",
+      "Bash(bash script/backup_drill.sh *)",
+      "Bash(./script/build.sh *)",
+      "Bash(script/build.sh *)",
+      "Bash(bash script/build.sh *)",
+      "Bash(./script/check_file.sh *)",
+      "Bash(script/check_file.sh *)",
+      "Bash(bash script/check_file.sh *)",
+      "Bash(./script/ci_bystanders.sh *)",
+      "Bash(script/ci_bystanders.sh *)",
+      "Bash(bash script/ci_bystanders.sh *)",
+      "Bash(./script/compose_smoke.sh *)",
+      "Bash(script/compose_smoke.sh *)",
+      "Bash(bash script/compose_smoke.sh *)",
+      "Bash(./script/exec.sh *)",
+      "Bash(script/exec.sh *)",
+      "Bash(bash script/exec.sh *)",
+      "Bash(./script/prune.sh *)",
+      "Bash(script/prune.sh *)",
+      "Bash(bash script/prune.sh *)",
+      "Bash(./script/restore.sh *)",
+      "Bash(script/restore.sh *)",
+      "Bash(bash script/restore.sh *)",
+      "Bash(./script/run.sh *)",
+      "Bash(script/run.sh *)",
+      "Bash(bash script/run.sh *)",
+      "Bash(./script/stop.sh *)",
+      "Bash(script/stop.sh *)",
+      "Bash(bash script/stop.sh *)",
+      "Bash(./script/test.sh *)",
+      "Bash(script/test.sh *)",
+      "Bash(bash script/test.sh *)",
+      "Bash(./script/hooks/post/build.sh *)",
+      "Bash(script/hooks/post/build.sh *)",
+      "Bash(bash script/hooks/post/build.sh *)",
+      "Bash(./script/hooks/post/run.sh *)",
+      "Bash(script/hooks/post/run.sh *)",
+      "Bash(bash script/hooks/post/run.sh *)",
+      "Bash(./script/hooks/pre/run.sh *)",
+      "Bash(script/hooks/pre/run.sh *)",
+      "Bash(bash script/hooks/pre/run.sh *)",
+      "Bash(./script/release.sh *)",
+      "Bash(script/release.sh *)",
+      "Bash(bash script/release.sh *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -23,6 +82,11 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/host-push-rules.sh || exit 2",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/env-rules.sh || exit 2",
             "timeout": 30
           }
         ]
