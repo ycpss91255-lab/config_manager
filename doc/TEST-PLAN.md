@@ -2297,9 +2297,9 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | 不是入口的指令提到 cm_verify（`echo cm_verify_x`） | 放行 |
 | token 檔：Read `../api token.md`、`doc/API-Token.md`（不分大小寫），Edit、Write 指名的 token 檔，Bash `cat "~/x/My Token.md"`，Glob 的 `pattern` 是 `**/*token*.md` | 擋下 |
 | Read `doc/README.md`；Glob 的 `**/*`、`**/*.md`、`**/*.sh`（只回傳路徑） | 放行 |
-| Grep：沒有 `glob`；`glob` 是 `**/*.md`、`*.{py,md}`、`*.p[y]`、`!*.py`、`*.*`；只給 `type: py`；`path` 是 `..`、`/tmp`、`~/x`；`path: src/a.py` 但沒有 `glob` | 擋下，下一步寫「加上副檔名寫死、不是 .md 的 glob…」 |
-| Grep：`path: src`、`glob: **/*.py` 與 `path: src/a.py`、`glob: **/*.py`；沒有 `path` 的 `glob: *.sh` | 放行（`path` 指檔案還是目錄 hook 不區分，條件相同、結果相同） |
-| Bash 的遞迴搜尋：`grep -r ghp_ .`、`grep -r --include='*.py' x src`、`rg ghp_`、`rg -t py x`、`find . -name '*' -exec grep ghp_ {} +`，以及 `-R`、連寫的 `-rn`、`--recursive`、`-d recurse`、`xargs grep` | 擋下，下一步寫「改用 Grep 工具…」 |
+| Grep 工具一律擋：沒有 `glob`；`glob` 是 `**/*.md`、`*.{py,md}`、`*.p[y]`、`!*.py`、`*.*`；只給 `type: py`；`path` 是 `..`、`/tmp`、`~/x`；`path: src/a.py` 但沒有 `glob`；原本放行的 `path: src`、`glob: **/*.py` 與 `path: src/a.py`、`glob: **/*.py`、沒有 `path` 的 `glob: *.sh` | 擋下，下一步寫「要讀單一檔案就用 Read…」（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的 symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 一律擋；`path` 指檔案還是目錄 hook 不區分，所以單一檔案也擋） |
+| Bash 的遞迴搜尋：`grep -r ghp_ .`、`grep -r --include='*.py' x src`、`rg ghp_`、`rg -t py x`、`find . -name '*' -exec grep ghp_ {} +`，以及 `-R`、連寫的 `-rn`、`--recursive`、`-d recurse`、`xargs grep` | 擋下，下一步寫「要讀單一檔案就用 Read…」 |
+| Bash 的遞迴搜尋與 Grep 被擋時的下一步 | 不再寫「改用 Grep 工具」（Grep 一律擋之後，那句會叫人去用一個被擋的工具） |
 | Bash 搜尋指名的檔（`grep -n x README.md`、`grep -e r README.md`）、`find . -name '*.py'` | 放行 |
 | 主 checkout：`git switch main`；從 worktree `cd ../main-checkout && git checkout feat/x`、`git -C ../main-checkout switch feat/x`、`cd .. && git -C main-checkout switch feat/x`（`-C` 以 `cd` 之後的目錄解析）、`git -C .. -C main-checkout checkout -b feat/y` | 擋下，下一步寫「改到 worktree 裡做…」 |
 | 判斷不了目錄：`cd "$X" && git switch feat/x`、子 shell 裡的 `cd`、`cd -`、`git -C "$X"`、`GIT_DIR=…` | 擋下，下一步寫「改到 worktree 裡做，或寫明目錄…」 |
@@ -2330,9 +2330,8 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 **它擋不住的**：
 - 回覆的散文用什麼語言（不經過工具）；`description` 只看有沒有中日韓文字，分不出繁簡。
 - Python 腳本自己開 docker、不在清單上的間接呼叫（別名、清單外的包裝程式、名稱來自變數又沒有字面線索的程式）；不是 shell 的可執行檔不在掃描範圍。
-- 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（例如 `cat scratch/x.py`）：hook 只看指令文字，`Read(//**/*token*.md)` 的 deny 規則對 Bash 指令有沒有效沒實測。Read 工具讀同一個 symlink 會被 deny 規則擋（桌面 app 實測，PR #425）。
-- 只用 Grep 的 `type` 或沒有副檔名限制的搜尋會被擋，要改寫法。
-- Grep 的起點或搜尋範圍裡指向 token 檔的 symlink：hook 只看輸入分不出來，靠 `Read(//**/*token*.md)` 的 deny 規則（文件寫明對 Grep、Glob 是 best-effort）；實測結果記在 PR #425 的「轉成可合併前核對」第 4 項（Claude 桌面 app 的 Code 分頁沒有 Grep、Glob 工具）。
+- 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（例如 `cat scratch/x.py`）：hook 只看指令文字，Read 工具讀同一個 symlink 會被 `Read(//**/*token*.md)` 的 deny 規則擋（桌面 app 實測，PR #425）；命令列補測時 `cat scratch/x.py` 被拒絕，但分不出是 deny 規則，還是非互動模式自動拒絕要確認的動作（PR #425）。
+- Grep 工具一律被擋，跨檔搜尋內容沒有替代做法：要讀單一檔案改用 Read；替代做法交給 #412 的後續 issue。原本的放行條件（`glob` 寫死副檔名、不是 md，`path` 是 repo 裡的相對路徑）要靠實測確認 Grep 不會讀到搜尋範圍裡指向 token 檔的 symlink，2026-11-25 的三個工作階段（桌面 app 的 Code 分頁、Claude Code 命令列 2.1.332 的 `claude -p`、審稿工作階段）的工具清單裡都沒有 Grep、Glob，原因沒有查證，實測做不到（PR #425 的「轉成可合併前核對」）；之後在有 Grep 工具的工作階段實測沒讀到，再另開 issue 放寬。
 - 依連接埠連進驗證環境；不經清單上入口碰驗證環境的寫法。
 - 主 checkout 裡用別的寫法切分支（腳本裡、git 的別名、先 `export GIT_DIR`）。
 - Codex、cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
