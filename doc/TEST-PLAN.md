@@ -1399,6 +1399,10 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/claude-hooks/host-push-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線（#409；git 的全域選項由 `shell-parse.sh` 的 `git_parts` 讀，和署名 hook 共用） | `test/bats/unit/host_push_rules.bats` |
 | `script/claude-hooks/env-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線與 `permissions.deny`（#412：docker 先問、不碰 `cm_verify_*`、不讀 token 檔、不在主 checkout 切分支、指令說明用中文） | `test/bats/unit/env_rules.bats` |
 | `script/claude-hooks/docker-entrypoints.txt`、`.claude/settings.json` 的 `permissions.ask`（#412：會執行 docker 的入口清單；規格遞迴掃 `script/` 底下的可執行檔） | `test/bats/unit/docker_entrypoints.bats` |
+| `script/claude-hooks/issue-rules.sh`、`.claude/settings.json` 的 PreToolUse 接線（#413：開 issue 與改本文只走審稿過的那一份，審稿紀錄只由 `script/issue_draft.sh` 寫） | `test/bats/unit/issue_rules.bats` |
+| `script/claude-hooks/issue-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#413） | `test/bats/unit/issue_reminder.bats` |
+| `script/issue_draft.sh`（#413：送審的快照與雜湊、審稿紀錄、只送判定通過而且雜湊相同的那一份） | `test/bats/unit/issue_draft.bats` |
+| `script/issue_tick.sh`（#413：勾帳本只改一行、主旨要在 git 歷史裡） | `test/bats/unit/issue_tick.bats` |
 | `script/lint_attribution.sh`、`script/githook-checks/commit-msg/20-no-attribution.sh`、`script/attribution-patterns.txt`、`ci.yaml` 的 `attribution` job 在 `ci-rollup` 的分組（#405） | `test/bats/unit/lint_attribution.bats` |
 | `script/scrub_attribution.sh`（#410：清掉既有 PR 與 issue 說明裡的署名與 session 連結，樣式清單的第四個呼叫端） | `test/bats/unit/scrub_attribution.bats` |
 | `script/pr_binding.sh`、`script/closing-references.txt`（#407：共用的綁定判定與唯一一份關閉參照的擷取規格） | `test/bats/unit/pr_binding.bats` |
@@ -2336,6 +2340,59 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 - 主 checkout 裡用別的寫法切分支（腳本裡、git 的別名、先 `export GIT_DIR`）。
 - Codex、cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
 
+**開 issue 與改本文的審稿紀錄**（#413）。規則是 `AGENTS.md`「開 issue 與發留言的條件」：issue 草稿與本文的修改交給協調工作階段另開的
+審稿工作階段審，判定通過的那一份就是開出去或改上去的那一份。送審與送出由 `script/issue_draft.sh` 做；繞過它的一般寫法由 Claude Code
+的 hook `script/claude-hooks/issue-rules.sh` 擋；勾帳本不送審，用 `script/issue_tick.sh`。hook 只讀工具呼叫的輸入（Q1），不讀草稿、
+紀錄與環境變數；兩支腳本由工作階段在主機上執行，呼叫 gh（規格用假的 gh）。
+
+**`script/issue_draft.sh`** 被觀察的是「送出的標題與內文，是不是審稿工作階段判定通過的那一份」。草稿在腳本所在簽出頂層的
+`.issue-drafts/<名稱>/`，雜湊是「標題、換行、內文」的 sha256；執行 `submit` 與 `verdict` 的工作階段 id 是環境變數
+`CLAUDE_CODE_SESSION_ID`。規格把腳本複製到暫存的樹執行。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `submit <名稱> --new` | 做出快照（`title.txt`、`body.md`、記著用途與寫的人的 `meta`），印出雜湊與要送給協調工作階段的那段話（含 `verdict` 指令） |
+| `submit <名稱> --edit <編號>` | 另存 GitHub 上送審當時的標題與本文（`base/`） |
+| 同一份內容重新 `submit` | 原有的審稿紀錄被刪掉 |
+| 已經開過（有 `published`）的同一份再 `submit` | 非零結束、印出網址，`published` 與紀錄不變 |
+| `submit`：沒有工作階段 id、標題兩行或空的、有 CR、命中署名樣式、鎖在別人手上 | 非零結束、不做快照，寫出下一步 |
+| `verdict`：意見檔最後一個非空行是 `判定：可以開`／`可以發`／`要修改` | 紀錄第一行是判定、雜湊與審稿的 id，之後是意見檔全文 |
+| `verdict`：執行的 id 和寫的人相同、id 是空的、快照不存在或被改過、意見檔讀不到或是空的、沒有判定、判定和用途對不上 | 非零結束並寫出下一步；原本判定通過的紀錄也刪掉 |
+| `verdict`：鎖在別人手上 | 非零結束，紀錄不動 |
+| `create`／`edit`：審完又改了草稿、判「要修改」、沒有紀錄或快照或 `meta`、讀不到草稿、審稿 id 和寫的人相同、用途對不上、命中署名樣式、已經開過、送審之後 GitHub 上的標題或本文變了 | 非零結束、不呼叫寫入的 gh，寫出下一步 |
+| `create`／`edit` 判定通過、雜湊相符 | gh 收到 `issue create`（或 `issue edit <編號>`），旗標只有 `--repo`、`--title`、`--body-file`，`--repo` 是 `github.com/ycpss91255-lab/config_manager`（設了 `GH_REPO`、`GH_HOST` 也一樣）；內文和快照逐位元組相同，核對之後改了 `body.md` 也一樣；`create` 寫出 `published` |
+| 鎖：兩個 `create` 同時跑；`create` 拿著鎖時的 `verdict`；鎖在別人手上時的 `create` | 後來的那一個非零結束、不呼叫 gh、紀錄不動 |
+
+**`script/claude-hooks/issue-rules.sh`**（PreToolUse，matcher `Bash` 與 `Write|Edit|NotebookEdit`）被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `gh issue create`（任何參數，含 `--attach`）、`gh issue new`，放在 `bash -c` 裡、交給 `xargs` 也一樣 | 以 2 結束，下一步寫送審的流程 |
+| `gh api` 開 issue（`…/issues`、有效方法是 POST、endpoint 是變數）；改 issue 的標題或本文（`…/issues/<編號>`、會寫入、欄位或 `--input` 的 JSON 有 `title` 或 `body`）；graphql 的有效查詢含 `createIssue` 或 `updateIssue`，或取不到有效查詢 | 以 2 結束 |
+| `gh issue edit` 帶 `-t`、`-b`、`--body-file`、`--attach`，或沒有任何旗標 | 以 2 結束，下一步寫改本文的流程與勾帳本用 `script/issue_tick.sh` |
+| 指令文字裡的 `CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_HOST_SESSION_ID` 不是單純讀取（設定、`env`、`export`、`unset`、`env -u`、`${名稱:=x}`） | 以 2 結束 |
+| Write、Edit、NotebookEdit 寫 `.issue-drafts/<名稱>/snapshots/` 底下的檔；Bash 重新導向、寫入或搬移類程式、刪除類程式（`rm`、`git clean`、`find -delete`）指到那裡，寫在 `issue_draft.sh` 那一條上的也一樣 | 以 2 結束，下一步寫快照只由 `script/issue_draft.sh` 寫 |
+| 讀 issue、只改 `state`、寫留言的 `gh api`；只改 label 的 `gh issue edit`；`printenv`、`$名稱`、`${名稱}`；查看快照；`rm -r` 或 `git clean` 刪整個快照資料夾以上；寫草稿本身；`script/issue_draft.sh`、`script/issue_tick.sh` | 以 0 結束 |
+| `.claude/settings.json` | PreToolUse 的 `Bash` 與 `Write\|Edit\|NotebookEdit` 兩個 matcher 都呼叫它 |
+
+**`script/claude-hooks/issue-reminder.sh`**（PostToolUse 與 PostToolUseFailure，matcher `Bash`）：只有一段而且成功的
+`script/issue_draft.sh create|edit` 之後，`additionalContext` 提醒在 issue 留言附最後一輪的判定與意見摘要；多段指令裡有它時給條件式
+提醒（失敗也給）；只有一段而且失敗、`submit`、`verdict` 不提醒。觸發規則和 `pr-ready-reminder.sh` 相同。
+
+**`script/issue_tick.sh`**：只把一條未勾的驗收條件（`-`、`*`、`+` 開頭）的 `[ ]` 改成 `[x]`、行尾加 ` — <commit 主旨>`，其他位元組
+不變；CRLF 的本文送出時是 LF；gh 只帶 `--repo`、`--body-file`。片段對到零行或兩行、主旨是空的或有換行、主旨不在目前目錄 `HEAD` 與
+`origin/main` 的 git 歷史裡、兩次讀到的本文不同、命中署名樣式時，非零結束、不呼叫 `gh issue edit`。
+
+**它擋不住的**（逐項見 #413 的「擋得住／擋不住」）：
+- 刻意繞過：改腳本（包括寫的人簽出裡還沒 commit 的修改）、執行別處的同名腳本、用 Python 或另寫的腳本寫紀錄或設環境變數、經 symlink
+  寫進快照、整段是變數的路徑（`rm "$P"`）、`gh alias`。紀錄沒有簽章。
+- 身分：只比對執行 `submit` 與執行 `verdict` 的工作階段 id 不同，分不出內容是誰寫的、判定是不是協調工作階段另開的審稿工作階段下的；
+  換一個工作階段送審或下判定就繞得過。同一個工作階段的 id 會不會中途改變沒有查證。
+- 刪掉整個 `.issue-drafts/<名稱>/` 再重送、重審，仍可能開出第二張（要再經過一次審稿）。
+- 審得好不好；網頁上開或改的 issue、cloud 工作階段、`disableAllHooks`、在終端機直接執行；開了之後的留言（只提醒）。
+- 勾帳本：主旨是真的 commit 主旨，但 commit 可以是為了勾帳本另做的；勾得對不對要人看。`edit` 與 `issue_tick.sh` 最後一次讀取和送出
+  之間都有很短的空檔。
+
 ### 已知未涵蓋：§0.4「例外處理的具體要求」
 
 設計 §0.4：「所有規範必須可由工具檢查——**無法自動檢查的規範等同不存在**。」
@@ -2506,6 +2563,10 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | `script/claude-hooks/pr-ready-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：PR 轉成可合併時提醒檢查全過會被 CI 合併，#408） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/host-push-rules.sh` | T19（Claude Code 的 PreToolUse hook：檢查工具不在主機直接跑、git push 寫明完整的目的地 ref、不推到 main、force push 只用 --force-with-lease，#409） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/env-rules.sh` | T19（Claude Code 的 PreToolUse hook：docker 先問、不碰 `cm_verify_*`、不讀 token 檔、不在主 checkout 切分支、指令說明用中文，#412） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/issue-rules.sh` | T19（Claude Code 的 PreToolUse hook：開 issue 與改本文只走審稿過的那一份、不改寫工作階段 id、審稿紀錄只由 `script/issue_draft.sh` 寫，#413） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/claude-hooks/issue-reminder.sh` | T19（Claude Code 的 PostToolUse／PostToolUseFailure hook：開了或改了 issue 之後提醒留言附判定，#413） | 已落地（由 `.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 在主機上執行，不由 `test.sh --lint` 執行） |
+| `script/issue_draft.sh` | T19（開 issue 與改本文的審稿流程：送審的快照與雜湊、審稿紀錄、只送判定通過而且雜湊相同的那一份，#413） | 已落地（由工作階段手動執行，不由 `test.sh --lint` 或 CI 執行） |
+| `script/issue_tick.sh` | T19（勾帳本只改一行、主旨要在 git 歷史裡，#413） | 已落地（由工作階段手動執行，不由 `test.sh --lint` 或 CI 執行） |
 | `script/lint_attribution.sh` | T19（PR 裡的 commit 訊息、PR 標題與描述，以及 commit 訊息檔的署名檢查，#405） | 已落地（CI 的 `attribution` job 與本機 commit-msg hook 執行，不由 `test.sh --lint` 執行） |
 | `script/scrub_attribution.sh` | T19（清掉既有 PR 與 issue 說明裡的 Claude 署名與 session 連結，#410） | 已落地（由執行者手動執行，不由 `test.sh --lint` 或 CI 執行） |
 | `script/pr_binding.sh` | T19（共用的綁定判定：每個 PR 綁一張本 repo 還沒完成的 issue，#407） | 已落地（由 checkpoints、single-task、merge-gate 與 merge job 呼叫，不由 `test.sh --lint` 執行） |
