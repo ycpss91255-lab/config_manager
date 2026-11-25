@@ -41,6 +41,44 @@ def test_yaml_with_an_underscored_float_round_trips_byte_identical():
     assert dump(parse(_UNDERSCORED_FLOAT_YAML, "yaml")) == _UNDERSCORED_FLOAT_YAML
 
 
+# #400 例 2：YAML merge 規格（yaml.org/type/merge.html）的範例文件，照抄。`---` 開頭、四個 anchor，
+# 接著明確寫出、merge 一個、merge 多個、覆蓋四種寫法；規格說這四個對照表相等。
+_MERGE_SPEC_EXAMPLE_YAML = (
+    "---\n"
+    "- &CENTER { x: 1, y: 2 }\n"
+    "- &LEFT { x: 0, y: 2 }\n"
+    "- &BIG { r: 10 }\n"
+    "- &SMALL { r: 1 }\n"
+    "\n"
+    "# All the following maps are equal:\n"
+    "\n"
+    "- # Explicit keys\n"
+    "  x: 1\n"
+    "  y: 2\n"
+    "  r: 10\n"
+    "  label: center/big\n"
+    "\n"
+    "- # Merge one map\n"
+    "  << : *CENTER\n"
+    "  r: 10\n"
+    "  label: center/big\n"
+    "\n"
+    "- # Merge multiple maps\n"
+    "  << : [ *CENTER, *BIG ]\n"
+    "  label: center/big\n"
+    "\n"
+    "- # Override\n"
+    "  << : [ *BIG, *LEFT, *SMALL ]\n"
+    "  x: 1\n"
+    "  label: center/big\n"
+)
+
+
+def test_the_yaml_merge_spec_example_round_trips_byte_identical():
+    # 沒改任何值：`---`、流式對照表裡的空白、`<< :` 的寫法、註解的位置都照原文寫回。
+    assert dump(parse(_MERGE_SPEC_EXAMPLE_YAML, "yaml")) == _MERGE_SPEC_EXAMPLE_YAML
+
+
 def test_yaml_syntax_error_raises_with_line_number():
     with pytest.raises(SyntaxParse) as caught:
         parse("key: [未閉合\n", "yaml")
