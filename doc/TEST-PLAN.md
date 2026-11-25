@@ -2330,9 +2330,9 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 **它擋不住的**：
 - 回覆的散文用什麼語言（不經過工具）；`description` 只看有沒有中日韓文字，分不出繁簡。
 - Python 腳本自己開 docker、不在清單上的間接呼叫（別名、清單外的包裝程式、名稱來自變數又沒有字面線索的程式）；不是 shell 的可執行檔不在掃描範圍。
-- 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）。
+- 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（例如 `cat scratch/x.py`）：hook 只看指令文字，`Read(//**/*token*.md)` 的 deny 規則對 Bash 指令有沒有效沒實測。Read 工具讀同一個 symlink 會被 deny 規則擋（桌面 app 實測，PR #425）。
 - 只用 Grep 的 `type` 或沒有副檔名限制的搜尋會被擋，要改寫法。
-- Grep 的起點或搜尋範圍裡指向 token 檔的 symlink：hook 只看輸入分不出來，靠 `Read(//**/*token*.md)` 的 deny 規則（文件寫明對 Grep、Glob 是 best-effort）；桌面 app 的實測記在 PR 的「轉成可合併前核對」第 4 項。
+- Grep 的起點或搜尋範圍裡指向 token 檔的 symlink：hook 只看輸入分不出來，靠 `Read(//**/*token*.md)` 的 deny 規則（文件寫明對 Grep、Glob 是 best-effort）；實測結果記在 PR #425 的「轉成可合併前核對」第 4 項（Claude 桌面 app 的 Code 分頁沒有 Grep、Glob 工具）。
 - 依連接埠連進驗證環境；不經清單上入口碰驗證環境的寫法。
 - 主 checkout 裡用別的寫法切分支（腳本裡、git 的別名、先 `export GIT_DIR`）。
 - Codex、cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
