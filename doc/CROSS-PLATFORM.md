@@ -59,7 +59,7 @@
 
 - **已定案**：服務以非 root（uid 1000）執行，不改動主機系統（#360）。
 - **現在可評估的方案**：
-  - 目標目錄要在 Docker Desktop 的分享範圍內；macOS 上預設的 `/opt/robot/config` 不在範圍內，要用 `CM_TARGET_ROOT` 指到 `/Users` 底下之類的路徑（README 第 3 步已寫明要在分享範圍內）。
+  - 目標目錄要在 Docker Desktop 的分享範圍內；macOS 上預設的 `/opt/robot/config` 不在範圍內，要用 `CM_TARGET_ROOT` 指到 `/Users` 底下之類的路徑（要放在分享範圍內這一點，寫在 #348 補上的 README 快速開始第 3 步；#348 合併之前，README 沒有這一步）。
   - Windows：容器內外同一條路徑的設計，與 Windows 的路徑形式不相容（推論）。選項是限定在 WSL 的路徑下使用，或讓掛載改成「主機路徑 → 固定的容器內路徑」。後者會改到白名單與清單檔記的路徑，影響範圍大，要另外決定。
 - **需要實驗回答的問題**：
   - Docker Desktop 上，uid 1000 寫出的檔案在主機上的擁有者與權限。
@@ -92,6 +92,13 @@
 | CI：入口工具在 macOS、Windows 上的測試（第 4 項） | 可以，但要等入口工具寫出來 | 測的對象是第 1 項的產物 |
 | CI：服務在 Docker Desktop 上的檢查（第 4 項） | 可以，但查過的兩份 runner 映像沒有預裝能跑 Linux 容器的環境 | 另裝是否可行沒有查；在那之前靠實機（#348） |
 | #349（移除 `src/config_manager/` 包層） | 依賴後端重構 | 標題就以「後端改用 Rust 或其他語言」為條件 |
+
+**#334 的 spike 結果（2026-11-25 補記）**：spike 在 11/19 收尾（#334 的
+[收尾留言](https://github.com/ycpss91255-lab/config_manager/issues/334#issuecomment-7000984625)與
+[更正](https://github.com/ycpss91255-lab/config_manager/issues/334#issuecomment-7002056143)）。目標語言維持 Rust；門檻沒有全部通過，
+目前不正式切換後端；沒驗證的部分（其中有 Docker Desktop 掛載目錄的檔案系統行為）結果是未知。這不改變上表的排法：上表只有
+#349 依賴後端重構，其餘各項本來就不等後端，所以順序不用調整。第 3 項「路徑與權限」要實測的問題，和 spike 留下的
+「Docker Desktop 掛載目錄」是同一類，實測時一起回答。
 
 ## 結論：要不要擴展
 
