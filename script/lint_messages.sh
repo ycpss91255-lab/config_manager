@@ -52,8 +52,8 @@ usage() {
 用法：script/lint_messages.sh [<path>...]
 
   <path>  一個目錄、一個 .py 檔，或一個 .sh 檔
-          （預設 src/config_manager script）。單一檔案是編輯後的 hook 走的
-          那條路徑——見 script/check_file.sh。
+          （預設 src/config_manager script）。單一檔案是 script/check_file.sh 的
+          命令列模式走的那條路徑（編輯後的 hook 只提醒、不跑，#412）。
 
   fail  面向使用者的訊息缺「下一步：」（該怎麼改）
   fail  面向使用者的訊息沒有指名任何具體的東西（沒有內插值，也沒有環境變數名、
