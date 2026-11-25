@@ -114,7 +114,8 @@
 - **不碰 `cm_verify_*` 驗證環境**：那是維護者人工驗收用的容器與 volume（`doc/USER-VERIFICATION.md` 的準備表），不啟動、不停止、
   不重建、不改。會開 docker 的入口加上指令裡的 `cm_verify` 由 hook 擋（#412）。（個人規則；Q3）
 - **不讀 token 檔**：存放存取 token 的檔（例如維護者機器上檔名含 token 的筆記）不讀、不搜尋到、不複製。由 hook 與
-  `Read(//**/*token*.md)` 的 deny 規則擋；Bash 的遞迴搜尋（`grep -r`、`rg`…）改用 Grep 工具（#412）。（協調工作階段的指示；Q3）
+  `Read(//**/*token*.md)` 的 deny 規則擋；Grep 工具與 Bash 的遞迴搜尋（`grep -r`、`rg`…）一律擋，要讀單一檔案用 Read（#412）。
+  （協調工作階段的指示；Q3）
 - **動工前先查證現況**：issue 內容常過期（已被後來的 PR 做掉卻沒關、引用的行號已經移動），先查 main、`git log`、`doc/TEST-PLAN.md`
   再動手。（個人規則）
 
@@ -162,7 +163,7 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 25 | docker 指令先問；本機跑 `./script/test.sh` 先問 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `.claude/settings.json` 的 `permissions.ask` | #412：`env-rules.sh` 對 `script/claude-hooks/docker-entrypoints.txt` 上的入口回傳 ask（規格遞迴掃 `script/` 核對清單）；`check_file.sh` 的 hook 模式只提醒、不開 docker | Python 腳本自己開 docker、不在清單上的間接呼叫；cloud 工作階段、`disableAllHooks` |
 | 26 | 驗收證據以 GitHub CI 為準 | 合併只認 CI：ruleset 要 `ci-rollup`（第 3 列） | 不需要 | 回報與驗收紀錄裡把本機結果當證據 |
 | 27 | 不碰 `cm_verify_*` 驗證環境 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 在清單上的入口加上指令裡的 `cm_verify` 時擋下（deny 優先於 ask） | 依連接埠連進驗證環境；不經清單上入口的寫法 |
-| 28 | 不讀 token 檔 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `permissions.deny` 的 `Read(//**/*token*.md)` | #412：`env-rules.sh` 擋 Read、Edit、Write、Grep、Glob 與 Bash 指名檔名含 token 的 `.md`；Grep 只放行副檔名寫死、不是 md 的 glob；Bash 的遞迴搜尋一律擋 | 自寫的程式自己開檔；檔名不含 token 的 token 檔；Grep 範圍裡的 symlink（靠 deny 規則，文件寫明 best-effort） |
+| 28 | 不讀 token 檔 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `permissions.deny` 的 `Read(//**/*token*.md)` | #412：`env-rules.sh` 擋 Read、Edit、Write、Grep、Glob 與 Bash 指名檔名含 token 的 `.md`；Grep 工具與 Bash 的遞迴搜尋一律擋（Grep 讀不讀得到範圍裡指向 token 檔的 symlink 判斷不了、實測做不到，照 Q8 擋，2026-11-25 改），下一步是用 Read 讀單一檔案 | 自寫的程式自己開檔；檔名不含 token 的 token 檔；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（hook 只看指令文字） |
 | 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 擋主 checkout 裡的 `git switch`、`git checkout <分支>`／`-b`，只放行確認是 linked worktree 的目錄；判斷不了目錄也擋 | 腳本裡、git 的別名、先 `export GIT_DIR` 這類別的寫法 |
 | 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定（「工作流程」的「開 issue 與發留言的條件」） | 只靠文字 | #413（未實作） | 整條 |
 | 31 | 判「可以開」就開，不必問維護者；不亂開、不開了又關；owner 層級或架構的決定仍等維護者 | 只靠文字 | 沒有 | 整條 |
