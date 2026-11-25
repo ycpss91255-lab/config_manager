@@ -1,8 +1,10 @@
-# Claude Code 署名與 session 連結的樣式（#405）。四個呼叫端都讀這一份，不各自抄：
+# Claude Code 署名與 session 連結的樣式（#405）。六個呼叫端都讀這一份，不各自抄：
 #   script/claude-hooks/no-attribution.sh                Claude Code 的 PreToolUse hook
 #   script/githook-checks/commit-msg/20-no-attribution.sh 本機的 commit-msg 檢查（轉給 lint_attribution.sh）
 #   script/lint_attribution.sh pr                        CI 的 attribution job
 #   script/scrub_attribution.sh                          清既有 PR 與 issue 說明（#410）：^ 開頭的樣式刪整行，其他的只換掉命中的那一段
+#   script/issue_draft.sh                                開 issue 與改本文送出前（#413）：送審與送出時檢查標題與內文
+#   script/issue_tick.sh                                 勾帳本送出前（#413）：檢查勾完的本文
 #
 # 一行一個延伸正規式，不分大小寫，逐行比對：文字先依換行拆成行，每一行各自比對每一條樣式。
 # 呼叫端用 Python 的 re 比對，所以只寫延伸正規式與 Python 意思相同的寫法（不用 \d、\b、[[:alpha:]] 這類）。
