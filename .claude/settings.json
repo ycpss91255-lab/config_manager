@@ -91,6 +91,11 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/env-rules.sh || exit 2",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/issue-rules.sh || exit 2",
+            "timeout": 30
           }
         ]
       },
@@ -100,6 +105,16 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/env-rules.sh || exit 2",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/issue-rules.sh || exit 2",
             "timeout": 30
           }
         ]
@@ -133,6 +148,11 @@
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-ready-reminder.sh || exit 2",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/issue-reminder.sh || exit 2",
+            "timeout": 30
           }
         ]
       }
@@ -144,6 +164,11 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/pr-ready-reminder.sh || exit 2",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/script/claude-hooks/issue-reminder.sh || exit 2",
             "timeout": 30
           }
         ]
