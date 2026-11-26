@@ -14,6 +14,7 @@ setup() {
   HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
   STEP_READ="要讀單一檔案就用 Read"
+  STEP_GIT_GREP="跨檔搜尋內容用 git grep"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -93,6 +94,26 @@ expect_bash() {
     got="$(bash_verdict "${command}" "${cwd}")"
     if [ "${got}" != "${want}" ]; then
       printf '%s => %s（預期 %s）\n' "${command}" "${got}" "${want}"
+      failed=1
+    fi
+  done
+  return "${failed}"
+}
+
+# expect_bash_step <下一步的片段> <cwd> <指令>…：每一條都被擋（deny），而且標準錯誤有 <下一步的片段>（字面比對）；不是的印出來
+# 並失敗。
+expect_bash_step() {
+  local step="$1" cwd="$2" command got failed=0
+  shift 2
+  for command in "$@"; do
+    bash_call "${command}" "${cwd}"
+    got="$(verdict)"
+    if [ "${got}" != deny ]; then
+      printf '%s => %s（預期 deny）\n' "${command}" "${got}"
+      failed=1
+    elif ! grep -qF -- "${step}" "${WORK}/err.txt"; then
+      printf '%s 被擋，但下一步沒有「%s」：\n' "${command}" "${step}"
+      cat "${WORK}/err.txt"
       failed=1
     fi
   done
@@ -342,6 +363,40 @@ checkouts() {
 
 @test "Bash 搜尋指名的檔、-e 的值是 r 時不擋" {
   run expect_bash allow "${WORK}" "grep -n x README.md" "grep -e r README.md" "find . -name '*.py'"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+# ── 第 4 點：跨檔搜尋用 git grep（#426） ─────────────────────────────────
+
+@test "git grep 帶 --no-index、--untracked 與它們的縮寫被擋（含 git -C、find -exec、sudo、caffeinate 執行的），下一步有跨檔搜尋內容用 git grep（#426）" {
+  run expect_bash_step "${STEP_GIT_GREP}" "${WORK}" \
+    "git grep --no-index x" \
+    "git grep --untracked x" \
+    "git grep --untrack x" \
+    "git grep --no-ind x" \
+    "git -C .. grep --no-index x" \
+    "find . -exec git grep --untracked x {} +" \
+    "sudo git grep --no-index x" \
+    "caffeinate git grep --no-index x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "縮寫到 --n、--u，寫在 -e 的值後面、連寫在 -O 後面，經 doas、watch、stdbuf、unbuffer 與 env、nice、timeout、nohup 執行的 git grep --no-index、--untracked 也被擋（#426）" {
+  run expect_bash_step "${STEP_GIT_GREP}" "${WORK}" \
+    "git grep --n x" \
+    "git grep --u x" \
+    "git grep -n -e x --untracked" \
+    "git grep -Oe --no-index x" \
+    "doas git grep --untracked x" \
+    "watch git grep --no-index x" \
+    "stdbuf -oL git grep --no-index x" \
+    "unbuffer git grep --untracked x" \
+    "env git grep --no-index x" \
+    "nice git grep --no-index x" \
+    "timeout 5 git grep --untracked x" \
+    "nohup git grep --no-index x"
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
