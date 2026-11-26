@@ -68,6 +68,7 @@ STEP_READ = ("要讀單一檔案就用 Read（Read 有 Read(//**/*token*.md) 的
 STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untracked，前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定，"
                  "只搜 repo 追蹤的檔")
 STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
+STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -411,6 +412,9 @@ def git_grep_rules(args, runner):
     if subcommand != "grep":
         return
     who = "git grep" if runner is None else f"{runner} 執行的 git grep"
+    if runner in ("xargs", "parallel"):
+        block(who, f"{runner} 會把讀到的字接在指令後面當參數，參數可能來自標準輸入，hook 看不到會不會加上 --no-index、"
+              "--untracked（Q8）", (STEP_RUNNER,) + STEP_SEARCH)
     for text, flag in git_grep_options(rest):
         alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
         block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", STEP_SEARCH)
