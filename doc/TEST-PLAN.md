@@ -2464,6 +2464,7 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | `core/identity` | T5 | 已落地 |
 | `core/index` | T14 | 已落地（`search_configs` 五檔範圍於 #32 加入） |
 | `core/parse` | T6（格式解析與原樣寫回） | 已落地（yaml／json／toml／ini／raw；#8）。ini 以 `;` 開頭的整行註解視為註解（只換給解析器看、原文不動，人工驗證 U06） |
+| `core/yaml_constructor` | T6——`core/parse` 讀 yaml 用的建構器，行為由 T6 的規格觀察（不另開介面） | 已落地：讀不成數字或日期的值（`0b_`、`2001-02-30` 這類）改丟帶位置的錯誤，經 `parse` 成為帶行號的 `SyntaxParse`（#402） |
 | `core/models` | 無獨立測試介面——見「刻意的空格」 | 已落地 |
 | `core/validate` | T3 | 已落地：第 1 層（語法、正規形式白名單、縮排／尾隨空白、重複 key 列全部行號，#16；套 `.lintrc.toml` 的設定，#43）；`check` 收到 schema 時併入第 2 層的問題（#39）、收到規則時併入第 3 層的警告（#41） |
 | `core/lintrc` | T3 | 已落地（`parse_lintrc`／`rules_for`／`DEFAULT`／`default_text`：第 1 層規則的設定檔，分節、豁免與理由、每個鍵的檢查，#43） |

@@ -45,6 +45,7 @@ from config_manager.core.errors import (
     UnrepresentableValue,
     UnsupportedFormat,
 )
+from config_manager.core.yaml_constructor import LocatingConstructor
 
 
 @dataclass
@@ -195,6 +196,8 @@ def _yaml(indent: tuple[int, int] | None = None) -> YAML:
     # `%YAML 1.2` 指令，破壞逐位元組往返，而 rt 本身已經給了 1.2 的取值語意。
     engine = YAML(typ="rt")
     engine.preserve_quotes = True
+    # 讀不成數字或日期的值（`0b_`、`2001-02-30`）丟帶位置的 YAMLError，不是裸 ValueError（#402）。
+    engine.Constructor = LocatingConstructor
     if indent is not None:
         # dump 用：套回 parse 時從原文量出的清單縮排風格（見 _yaml_indent_style）。
         sequence, offset = indent
