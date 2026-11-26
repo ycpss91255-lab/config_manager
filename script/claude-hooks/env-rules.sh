@@ -220,7 +220,7 @@ def dispatch(program, args, state, assignments, words):
                 ask(f"{program} {sourced}")
     elif program == "git":
         analyze_git(args, state, assignments)
-        git_grep_rules(args, VARIABLES, None)
+        git_rules(args, VARIABLES, None)
     elif program in GREPS:
         analyze_grep(program, args)
     elif program == "rg":
@@ -271,7 +271,7 @@ def analyze_runner(runner, args, state):
                 skips.add(len(args) - len(rest) - 1)
             # 包裝程式後面、git 前面的變數設定（sudo NAME=值、sudo env NAME=值）也算
             variables = VARIABLES + [name for name in map(assigned, args[:i]) if name]
-            git_grep_rules(args[i + 1:], variables, runner or "這條指令")
+            git_rules(args[i + 1:], variables, runner or "這條指令")
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -469,19 +469,45 @@ GIT_GREP_CONFIG = ("會改這次搜尋的 git 設定（例如 grep.fallbackToNoI
                    "設定（Q1），判斷不了實際搜尋的範圍")
 
 
-def git_grep_rules(args, variables, runner):
-    """args 是 git 後面的字；variables 是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的包裝程式（直接下的
-    是 None）。"""
-    options, subcommand, rest = git_parts(args)
-    if subcommand is None:  # 全域選項或子指令來自 shell 展開：rest 從那個字開始
-        if any(w.static and w.text == "grep" for w in rest) or any(kind == "flag" for kind, _, _ in git_grep_findings(rest)):
-            block("git" if runner is None else f"{runner} 執行的 git", "git 的選項或子指令來自 shell 展開，後面又有 grep 或 "
-                  "--no-index、--untracked，判斷不了會不會是讀沒追蹤檔或 repo 外檔的 git grep（Q8）",
-                  (STEP_LITERAL,) + STEP_SEARCH)
+def git_words(args):
+    """git 後面的字分成 (全域選項, 子指令, 子指令後面的字, 判斷不了的原因)（#436 調整需求第 1 點）。全域選項是依序的
+    (名稱, 值的 Word 或 None)。要值的全域選項（-C、-c…）後面那個字，與字面部分以 -- 開頭又含 = 的字（--git-dir="$D"）是全域選項
+    的值，來自展開也一樣，不算子指令。這一段裡有會拆成好幾個字的字，或子指令來自展開時，子指令是 None、原因是那一句。沒有子指令時
+    子指令是空字串。shell-parse.sh 的 git_parts 照舊（其他 hook 與 git switch 的規則用它），這裡另外分。"""
+    options = []
+    i = 0
+    while i < len(args):
+        word = args[i]
+        head = word.text if word.static else word.prefix
+        if word.splits:
+            return options, None, args[i:], f"git 的全域選項或子指令這一段有會拆成好幾個字的 {shown_word(word)}"
+        if word.static and head in GIT_GLOBAL_VALUES:
+            value = args[i + 1] if i + 1 < len(args) else None
+            if value is not None and value.splits:
+                return options, None, args[i + 1:], f"git {head} 的值 {shown_word(value)}會拆成好幾個字"
+            options.append((head, value))
+            i += 2
+        elif (word.static and head.startswith("-")) or (head.startswith("--") and "=" in head):
+            name = head.split("=", 1)[0]
+            options.append((name, sub_word(word, len(name) + 1) if "=" in head else None))
+            i += 1
+        elif not word.static:
+            return options, None, args[i:], f"git 的子指令（或全域選項）{shown_word(word)}來自 shell 展開"
+        else:
+            return options, head, args[i + 1:], None
+    return options, "", [], None
+
+
+def git_rules(args, variables, runner):
+    """git 後面的字 args 的規則（#426、#436）。variables 是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的
+    包裝程式（直接下的是 None）。"""
+    who = "git" if runner is None else f"{runner} 執行的 git"
+    options, subcommand, rest, unclear = git_words(args)
+    if unclear is not None:
+        block(who, f"{unclear}，判斷不了實際執行的是哪個子指令、帶了哪些選項（Q8）", (STEP_LITERAL,) + STEP_SEARCH)
         return
-    if subcommand != "grep":
-        return
-    git_grep_checks("git grep" if runner is None else f"{runner} 執行的 git grep", options, rest, variables, runner, ())
+    if subcommand == "grep":  # 子指令是字面、不是 grep 的，後面的字不看
+        git_grep_checks(f"{who} grep", options, rest, variables, runner, ())
 
 
 GIT_GREP_SPLIT = ("展開後會拆成好幾個字（沒加雙引號的變數、指令替換、算術展開，\"$@\"、萬用字元、大括號展開），其中一個可能就是 "
