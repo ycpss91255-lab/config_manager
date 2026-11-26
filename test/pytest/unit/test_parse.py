@@ -480,6 +480,42 @@ def test_changing_two_json_values_keeps_a_multi_line_array_as_written():
     assert _lines(dump(parsed)) == _lines(expected)
 
 
+# ── #401：改了別的值，沒動過的時間戳照原文寫回 ─────────────────────────────────────
+# #334 的 spike 經實際 API 量到的寫法：帶小數秒的兩種時間戳（小寫 `t`；空白分隔加 `-5`），其中一個在
+# 清單裡。同一份檔另有三種沒被改寫的寫法（`Z`、沒有時區、日期）與一個整數。
+
+_TIMESTAMPS_YAML = (
+    "ts: 2001-12-14t21:59:43.10-05:00\n"
+    "sp: 2001-12-14 21:59:43.10 -5\n"
+    "utc: 2001-12-14T21:59:43Z\n"
+    "naive: 2001-12-14 21:59:43\n"
+    "d: 2001-12-14\n"
+    "n: 1\n"
+    "l: [2001-12-14t21:59:43.10-05:00, 2001-12-14, 1]\n"
+)
+
+# 改了哪一個值：流程 A 只改 n；流程 C 把 ts 改成另一個字串（issue #401 的現象）。
+_TIMESTAMP_EDITS = pytest.mark.parametrize(
+    ("path", "value"),
+    [("n", 2), ("ts", "2001-12-15T00:00:00Z")],
+    ids=["change-n", "change-ts-to-a-string"],
+)
+
+
+def _lines_other_than(text, key):
+    return [line for line in _lines(text) if not line.startswith(f"{key}:")]
+
+
+@_TIMESTAMP_EDITS
+def test_changing_another_yaml_value_keeps_untouched_timestamps_as_written(path, value):
+    # 被改那一行怎麼寫由函式庫決定（T6），其餘每一行照原文——包括 `sp` 與清單 `l` 裡的時間戳。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+
+    set_value(parsed, path, value)
+
+    assert _lines_other_than(dump(parsed), path) == _lines_other_than(_TIMESTAMPS_YAML, path)
+
+
 # ── F9 的邊界：介面送回整個清單時常見的幾種改法，沒改的部分都逐行不動 ──────────────
 # 介面的清單操作（web/index.html）：改值、刪一項、上下移、新增時複製最後一項。每一種送來的都是
 # 最外層的整個清單。新增的那一項怎麼寫這次不規定，只比對它以外的行。
