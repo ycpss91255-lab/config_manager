@@ -77,6 +77,7 @@ STEP_LITERAL = "git 的選項與子指令寫成字面"
 STEP_GREP_ARGS = "git grep 的選項寫成字面；要搜的字串來自變數時寫成 -e \"$X\"，路徑放在 -- 後面"
 STEP_XARGS = "xargs 後面的 git 寫明字面的子指令（不用替換字串）"
 STEP_SHELL_RUNNER = "不經 watch、parallel，直接下 git"
+STEP_PROGRAM = "程式名稱寫成字面（例如 git、sudo），不放在變數裡"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -241,7 +242,23 @@ def indirect(words):
         ask(script)
     elif os.path.basename(words[0].text) in PROGRAMS:
         ask(os.path.basename(words[0].text))
+    indirect_git_grep(words[1:], VARIABLES, None)
     analyze_runner(None, words[1:], None)
+
+
+def indirect_git_grep(args, variables, runner):
+    """程式名稱來自 shell 展開、後面有字面的 grep（#436 調整需求第 1 點）：把那個程式當成可能是 git，照 git grep 的規則看。
+    args 是程式名稱後面的字；第一個字面的 grep 當成子指令，前面的字只看 -c、--config-env。後面沒有字面的 grep 的不看（例如
+    "$PY" -m pip install --no-index）。下一步先寫「程式名稱寫成字面」，再寫被觸發的那條 git grep 規則的下一步。"""
+    for k, word in enumerate(args):
+        if word.static and word.text == "grep":
+            break
+    else:
+        return
+    options = [((w.text if w.static else w.prefix).split("=", 1)[0], None) for w in args[:k]]
+    who = "程式名稱來自 shell 展開" if runner is None else f"{runner} 執行、程式名稱來自 shell 展開"
+    git_grep_checks(f"{who}、後面有 grep 的指令（可能是 git grep）", options, args[k + 1:], variables, runner,
+                    (STEP_PROGRAM,))
 
 
 def analyze_runner(runner, args, state):
@@ -249,7 +266,10 @@ def analyze_runner(runner, args, state):
     直接下的規則（#426），它的子指令 grep 不當成 grep 程式。"""
     skips = set()  # git grep 的子指令 grep 在 args 裡的位置
     for i, word in enumerate(args):
-        if not word.static or i in skips:
+        if i in skips:
+            continue
+        if not word.static:  # 程式名稱可能就是這個展開（sudo "$GIT" grep …）：照同樣的規則（#436）
+            indirect_git_grep(args[i + 1:], VARIABLES + [name for name in map(assigned, args[:i]) if name], runner)
             continue
         name = os.path.basename(word.text)
         script = entry_script(word, state)
