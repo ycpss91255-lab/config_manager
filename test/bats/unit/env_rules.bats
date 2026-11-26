@@ -14,6 +14,10 @@ setup() {
   HOOK="${REPO_ROOT}/script/claude-hooks/env-rules.sh"
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
   STEP_READ="要讀單一檔案就用 Read"
+  STEP_GIT_GREP="跨檔搜尋內容用 git grep"
+  STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
+  STEP_LITERAL="git 的選項與子指令寫成字面"
+  STEP_CONFIG="前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -97,6 +101,39 @@ expect_bash() {
     fi
   done
   return "${failed}"
+}
+
+# expect_bash_step <下一步的片段> <cwd> <指令>…：每一條都被擋（deny），而且標準錯誤有 <下一步的片段>（字面比對）；不是的印出來
+# 並失敗。
+expect_bash_step() {
+  local step="$1" cwd="$2" command got failed=0
+  shift 2
+  for command in "$@"; do
+    bash_call "${command}" "${cwd}"
+    got="$(verdict)"
+    if [ "${got}" != deny ]; then
+      printf '%s => %s（預期 deny）\n' "${command}" "${got}"
+      failed=1
+    elif ! grep -qF -- "${step}" "${WORK}/err.txt"; then
+      printf '%s 被擋，但下一步沒有「%s」：\n' "${command}" "${step}"
+      cat "${WORK}/err.txt"
+      failed=1
+    fi
+  done
+  return "${failed}"
+}
+
+# blocked_searches：Bash 的 grep -r x .、rg x、find . -exec grep x {} + 與 Grep 工具各呼叫一次，標準錯誤依序存成
+# search-1.txt～search-4.txt。
+blocked_searches() {
+  local i=0 command
+  for command in "grep -r x ." "rg x" "find . -exec grep x {} +"; do
+    i=$((i + 1))
+    bash_call "${command}"
+    cp "${WORK}/err.txt" "${WORK}/search-${i}.txt"
+  done
+  call Grep '{"pattern": "x"}'
+  cp "${WORK}/err.txt" "${WORK}/search-4.txt"
 }
 
 # commit <repo>：在 <repo> 留一個空的 commit（只有規格自己呼叫 git；hook 不呼叫）。
@@ -344,6 +381,154 @@ checkouts() {
   run expect_bash allow "${WORK}" "grep -n x README.md" "grep -e r README.md" "find . -name '*.py'"
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+# ── 第 4 點：跨檔搜尋用 git grep（#426） ─────────────────────────────────
+
+@test "git grep 帶 --no-index、--untracked 與它們的縮寫被擋（含 git -C、find -exec、sudo、caffeinate 執行的），下一步有跨檔搜尋內容用 git grep（#426）" {
+  run expect_bash_step "${STEP_GIT_GREP}" "${WORK}" \
+    "git grep --no-index x" \
+    "git grep --untracked x" \
+    "git grep --untrack x" \
+    "git grep --no-ind x" \
+    "git -C .. grep --no-index x" \
+    "find . -exec git grep --untracked x {} +" \
+    "sudo git grep --no-index x" \
+    "caffeinate git grep --no-index x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "縮寫到 --n、--u，寫在 -e 的值後面、連寫在 -O 後面，經 doas、watch、stdbuf、unbuffer 與 env、nice、timeout、nohup 執行的 git grep --no-index、--untracked 也被擋（#426）" {
+  run expect_bash_step "${STEP_GIT_GREP}" "${WORK}" \
+    "git grep --n x" \
+    "git grep --u x" \
+    "git grep -n -e x --untracked" \
+    "git grep -Oe --no-index x" \
+    "doas git grep --untracked x" \
+    "watch git grep --no-index x" \
+    "stdbuf -oL git grep --no-index x" \
+    "unbuffer git grep --untracked x" \
+    "env git grep --no-index x" \
+    "nice git grep --no-index x" \
+    "timeout 5 git grep --untracked x" \
+    "nohup git grep --no-index x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "經 xargs、parallel 執行的 git grep 一律被擋，下一步有不經 xargs、parallel，直接下 git grep（#426）" {
+  run expect_bash_step "${STEP_RUNNER}" "${WORK}" \
+    "xargs git grep -n x" \
+    "xargs git grep --no-index x" \
+    "parallel git grep -n x ::: src"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "git 的全域選項或子指令來自 shell 展開的 git \$OPTS grep x、git \$SUB --no-index x 被擋，下一步有 git 的選項與子指令寫成字面（#426）" {
+  run expect_bash_step "${STEP_LITERAL}" "${WORK}" \
+    'git $OPTS grep x' \
+    'git $SUB --no-index x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "改 git 設定的 git -c、--config-env 與 GIT_CONFIG 開頭的變數設定（含 env 後面的）加在 git grep 前面被擋，下一步有前面不加這些設定（#426）" {
+  run expect_bash_step "${STEP_CONFIG}" "${WORK}" \
+    "git -c grep.fallbackToNoIndex=true grep x" \
+    "git -c color.ui=never grep -n x" \
+    "git --config-env=grep.fallbackToNoIndex=V grep x" \
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.fallbackToNoIndex GIT_CONFIG_VALUE_0=true git grep x" \
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.fallbackToNoIndex GIT_CONFIG_VALUE_0=true git grep x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "不帶這些寫法的 git grep 放行：grep 的計數選項 -c、-e 的值與 -- 之後的字不算，sudo 執行的照同樣的規則（#426）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n x" \
+    "git grep -n x -- '*.py'" \
+    "git -C ../wt grep -n x" \
+    "git grep -c x" \
+    "git grep -n -e --no-index" \
+    "git grep -n x -- --untracked" \
+    "sudo git grep -n x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "-f 的值、連寫的 -ne 的值、不是 --no-index 前綴的 --null 與 --name-only、--no-untracked，與 grep 以外的 git 子指令前面的 -c、GIT_CONFIG 放行（#426）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n -f --untracked" \
+    "git grep -ne --no-index" \
+    "git grep --null -l x" \
+    "git grep --name-only x" \
+    "git grep --no-untracked x" \
+    'git $OPTS log -n 1' \
+    "git -c color.ui=never log -n 1" \
+    "GIT_CONFIG_COUNT=0 git log -n 1"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "find -exec、sudo 執行的 git grep 照直接下 git grep 的規則：find . -exec git grep -n x {} +、sudo git grep -r x 放行，不再當成 find、sudo 執行的 grep（#426）" {
+  run expect_bash allow "${WORK}" \
+    "find . -exec git grep -n x {} +" \
+    "sudo git grep -r x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "grep -r、rg、find -exec grep 與 Grep 工具被擋時，下一步同時有要讀單一檔案就用 Read 與跨檔搜尋內容用 git grep（#426）" {
+  local file failed=0
+  blocked_searches
+
+  for file in "${WORK}"/search-[1-4].txt; do
+    if ! grep -qF "${STEP_READ}" "${file}" || ! grep -qF "${STEP_GIT_GREP}" "${file}"; then
+      printf '%s 的下一步少了其中一句：\n' "${file##*/}"
+      cat "${file}"
+      failed=1
+    fi
+  done
+  [ "${failed}" -eq 0 ]
+}
+
+@test "grep -r、rg、find -exec grep 與 Grep 工具被擋時，下一步沒有不分種類的「Bash 的遞迴搜尋一律擋」（#426）" {
+  local file failed=0
+  blocked_searches
+
+  for file in "${WORK}"/search-[1-4].txt; do
+    if [ ! -s "${file}" ] || grep -qF "Bash 的遞迴搜尋一律擋" "${file}"; then
+      printf '%s 是空的，或下一步還有不分種類的那句：\n' "${file##*/}"
+      cat "${file}"
+      failed=1
+    fi
+  done
+  [ "${failed}" -eq 0 ]
+}
+
+@test "grep -r、rg、find -exec grep 與 Grep 工具被擋時，hook 印的下一步裡沒有日期與工作階段的清單（#426）" {
+  local file steps failed=0
+  blocked_searches
+
+  for file in "${WORK}"/search-[1-4].txt; do
+    steps="$(sed -n '/下一步：/,$p' "${file}")"
+    if [ -z "${steps}" ] || printf '%s\n' "${steps}" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}|工作階段'; then
+      printf '%s 沒有下一步，或下一步裡有日期或工作階段：\n' "${file##*/}"
+      cat "${file}"
+      failed=1
+    fi
+  done
+  [ "${failed}" -eq 0 ]
+}
+
+@test "git grep 要搜的字串是含 token 的 .md 檔名（git grep -n 'token*.md'）時照 token 檔的規則被擋（#426）" {
+  [ "$(bash_verdict "git grep -n 'token*.md'")" = deny ]
+}
+
+@test "git grep 改搜不含副檔名的片段 git grep -n 'token\\*' 放行（#426）" {
+  [ "$(bash_verdict "git grep -n 'token\\*'")" = allow ]
 }
 
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {

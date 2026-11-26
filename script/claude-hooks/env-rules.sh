@@ -14,7 +14,11 @@
 #   第 4 點  token 檔：Read／Edit／Write 的 file_path、Grep 的 path 與 glob、Glob 的 path 與 pattern、Bash 指令裡的每個字，
 #            檔名含 token 的 .md（不分大小寫）就擋。Grep 工具一律擋（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的
 #            symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 擋）；Bash 的遞迴搜尋（grep -r／-R、rg、
-#            find … -exec grep、xargs grep）也一律擋。兩者的下一步都是「要讀單一檔案就用 Read」。
+#            find … -exec grep、xargs grep）也一律擋。git grep 會讀沒追蹤檔或 repo 外檔的寫法也擋（#426）：帶 --no-index、
+#            --untracked（含至少到 --n／--u 的縮寫；-e、-f 的值與 -- 之後的字不算），前面有 git -c、--config-env 或
+#            GIT_CONFIG… 的變數設定（含 env 後面的），經 xargs、parallel 執行，git 的選項或子指令來自 shell 展開而後面有 grep
+#            或這兩個選項；經 git -C、find -exec 與 sudo 這類包裝程式執行的照同樣的規則。這幾種的下一步都是「要讀單一檔案就用
+#            Read」與「跨檔搜尋內容用 git grep」：不帶這些寫法的 git grep 只搜 repo 追蹤的檔。
 #   第 5 點  主 checkout 不切分支：git switch、git checkout <分支>／-b 的目錄從 hook 輸入的 cwd 開始，依序疊上 cd 與
 #            git -C；從那裡往上找 .git，只有確認是 linked worktree（gitdir 指到的管理目錄有 commondir，共用目錄底下的
 #            worktrees/<名稱> 就是它）才放行。git checkout -- <檔> 不擋。
@@ -64,7 +68,12 @@ STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容
                "不啟動、不停止、不重建、不改；要操作請維護者自己執行")
 STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段的規則」）；需要 token 的步驟請維護者自己執行"
 STEP_READ = ("要讀單一檔案就用 Read（Read 有 Read(//**/*token*.md) 的 deny 規則，照 symlink 解析到的檔比對）；"
-             "Grep 工具與 Bash 的遞迴搜尋一律擋（#412 調整需求第 4 點）")
+             "Grep 工具、Bash 的 grep -r、rg 這類遞迴搜尋，與 git grep 會讀沒追蹤檔或 repo 外檔的寫法一律擋（#412、#426）")
+STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untracked，前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定，"
+                 "只搜 repo 追蹤的檔")
+STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
+STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
+STEP_LITERAL = "git 的選項與子指令寫成字面"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -78,7 +87,7 @@ STEP_ENTRIES = "確認 script/claude-hooks/docker-entrypoints.txt 在這個簽�
 COMMANDS = "docker／git／grep 這類指令"
 UNPARSABLE = "判斷不了它會不會開 docker、讀 token 檔或在主 checkout 切分支"
 
-DENY = []  # (位置, 原因, 下一步)
+DENY = []  # (位置, 原因, 下一步)；下一步是一句，或依序的幾句（tuple）
 ASK = []   # 位置
 
 
@@ -101,8 +110,9 @@ def finish():
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
-            if step not in steps:
-                steps.append(step)
+            for line in step if isinstance(step, tuple) else (step,):
+                if line not in steps:
+                    steps.append(line)
         print(f"{TAG}: 下一步：", file=err)
         for step in steps:
             print(f"{TAG}:   - {step}", file=err)
@@ -168,6 +178,31 @@ def entry_script(word, state):
 GREPS = {"grep", "egrep", "fgrep"}
 RUNNERS = {"sudo", "doas", "xargs", "watch", "parallel", "caffeinate", "stdbuf", "unbuffer"}
 
+# 這一段指令前面與 env 後面的變數設定名稱，給 git grep 的 GIT_CONFIG… 規則用（#426）。shell-parse.sh 的 command_words 只回傳
+# 前面的，env 後面的由 strip_wrappers 拿掉；git switch 的規則照舊只看前面的。
+VARIABLES = []
+
+_shared_strip_wrappers = strip_wrappers
+_shared_command_words = command_words
+
+
+def assigned(word):
+    """NAME=值 設定的變數名稱（值來自 shell 展開也算）；不是變數設定就回 None。"""
+    return word.prefix.split("=", 1)[0].rstrip("+") if ASSIGN.match(word.prefix) else None
+
+
+def strip_wrappers(words):  # 取代 shell-parse.sh 的同名函式：拿掉的包裝裡的變數設定（env NAME=值）另記進 VARIABLES
+    rest = _shared_strip_wrappers(words)
+    VARIABLES.extend(name for name in map(assigned, words[:len(words) - len(rest)]) if name)
+    return rest
+
+
+def command_words(command):  # 取代 shell-parse.sh 的同名函式：每一段指令重記 VARIABLES，前面的變數設定也記進去
+    del VARIABLES[:]
+    assignments, words = _shared_command_words(command)
+    VARIABLES[:0] = assignments
+    return assignments, words
+
 
 def dispatch(program, args, state, assignments, words):
     script = entry_script(words[0], state)
@@ -184,11 +219,12 @@ def dispatch(program, args, state, assignments, words):
                 ask(f"{program} {sourced}")
     elif program == "git":
         analyze_git(args, state, assignments)
+        git_grep_rules(args, VARIABLES, None)
     elif program in GREPS:
         analyze_grep(program, args)
     elif program == "rg":
         block("rg", "rg 會讀搜尋範圍裡每個檔的內容；它的設定檔、跟不跟隨 symlink 都會改變實際的搜尋範圍，只看指令判斷不了"
-              "會不會讀到 token 檔", STEP_READ)
+              "會不會讀到 token 檔", STEP_SEARCH)
     elif program == "find":
         analyze_find(args, state)
     elif program in RUNNERS:
@@ -206,9 +242,11 @@ def indirect(words):
 
 
 def analyze_runner(runner, args, state):
-    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問，有 grep、rg 就擋。"""
+    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問，有 grep、rg 就擋；git grep 照
+    直接下的規則（#426），它的子指令 grep 不當成 grep 程式。"""
+    skips = set()  # git grep 的子指令 grep 在 args 裡的位置
     for i, word in enumerate(args):
-        if not word.static:
+        if not word.static or i in skips:
             continue
         name = os.path.basename(word.text)
         script = entry_script(word, state)
@@ -221,11 +259,18 @@ def analyze_runner(runner, args, state):
         elif name in GREPS or name == "rg":
             if runner in ("xargs", "find") or name == "rg":
                 block(f"{runner or '這條指令'} 執行的 {name}", f"{name} 交給別的程式執行，搜尋哪些檔在執行時才決定，"
-                      "hook 判斷不了會不會讀到 token 檔", STEP_READ)
+                      "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
             else:
                 analyze_grep(name, args[i + 1:])
-        elif name == "git" and runner in ("sudo", "doas"):
-            analyze_git(args[i + 1:], state if state is not None else State(None), [])
+        elif name == "git":
+            if runner in ("sudo", "doas"):
+                analyze_git(args[i + 1:], state if state is not None else State(None), [])
+            _, subcommand, rest = git_parts(args[i + 1:])
+            if subcommand == "grep":
+                skips.add(len(args) - len(rest) - 1)
+            # 包裝程式後面、git 前面的變數設定（sudo NAME=值、sudo env NAME=值）也算
+            variables = VARIABLES + [name for name in map(assigned, args[:i]) if name]
+            git_grep_rules(args[i + 1:], variables, runner or "這條指令")
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -335,7 +380,7 @@ def analyze_grep(program, args):
                     break
         if recursive is not None:
             block(f"{program} {recursive}", "遞迴搜尋會讀目錄底下每個檔的內容；Read 的 deny 規則不涵蓋這類指令，grep 跟不跟隨 "
-                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_READ)
+                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_SEARCH)
             return
         i += 1
 
@@ -345,6 +390,83 @@ def analyze_find(args, state):
         if word.static and word.text in ("-exec", "-execdir", "-ok", "-okdir"):
             analyze_runner("find", args[i + 1:], state)
             return
+
+
+# git grep（#426）：不帶 --no-index、--untracked 的 git grep 只搜 repo 追蹤的檔（git-grep(1)），是跨檔搜尋內容的替代做法；會讀
+# 沒追蹤檔或 repo 外檔的寫法擋下。只看指令文字（Q1），不讀 git 設定。
+
+GIT_GREP_FLAGS = {"--no-index": "會搜目前目錄底下不歸 git 管的檔，在 repo 外執行時就是那個資料夾裡的每個檔",
+                  "--untracked": "會連 repo 裡沒追蹤的檔一起搜"}
+GIT_GREP_VALUE_SHORT = "ef"       # -e、-f 的值是要搜的字串、讀字串的檔，不算選項
+GIT_GREP_ATTACHED_SHORT = "ABCmO"  # 連寫時，後面的字是它的值（-O 只收連寫的值）
+
+
+def git_grep_flag(text):
+    """--no-index、--untracked，或它們至少到 --n／--u 的前綴（長選項可以縮寫，照 Q8 都算）；--x=值 只看 = 前面。不是就回 None。"""
+    name = text.split("=", 1)[0]
+    if len(name) < 3:
+        return None
+    for flag in GIT_GREP_FLAGS:
+        if flag.startswith(name):
+            return flag
+    return None
+
+
+def git_grep_options(args):
+    """git grep 的參數裡寫成選項的 --no-index、--untracked（含縮寫）：[(那個字, 完整的選項名)]。-e、-f 的值與 -- 之後的字
+    不算；來自 shell 展開的字看展開之前的字面部分。"""
+    found = []
+    i = 0
+    while i < len(args):
+        word = args[i]
+        text = word.text if word.static else word.prefix
+        if word.static and text == "--":
+            break
+        if text.startswith("--"):
+            flag = git_grep_flag(text)
+            if flag is not None:
+                found.append((text, flag))
+        elif text.startswith("-") and len(text) > 1:
+            for j, option in enumerate(text[1:]):
+                if option in GIT_GREP_VALUE_SHORT:
+                    if word.static and not text[j + 2:]:
+                        i += 1  # 值是下一個字
+                    break
+                if option in GIT_GREP_ATTACHED_SHORT:
+                    break
+        i += 1
+    return found
+
+
+GIT_GREP_CONFIG = ("會改這次搜尋的 git 設定（例如 grep.fallbackToNoIndex 讓 repo 外的 git grep 改用 --no-index）；hook 不讀 git "
+                   "設定（Q1），判斷不了實際搜尋的範圍")
+
+
+def git_grep_rules(args, variables, runner):
+    """args 是 git 後面的字；variables 是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的包裝程式（直接下的
+    是 None）。"""
+    options, subcommand, rest = git_parts(args)
+    if subcommand is None:  # 全域選項或子指令來自 shell 展開：rest 從那個字開始
+        if any(w.static and w.text == "grep" for w in rest) or git_grep_options(rest):
+            block("git" if runner is None else f"{runner} 執行的 git", "git 的選項或子指令來自 shell 展開，後面又有 grep 或 "
+                  "--no-index、--untracked，判斷不了會不會是讀沒追蹤檔或 repo 外檔的 git grep（Q8）",
+                  (STEP_LITERAL,) + STEP_SEARCH)
+        return
+    if subcommand != "grep":
+        return
+    who = "git grep" if runner is None else f"{runner} 執行的 git grep"
+    if runner in ("xargs", "parallel"):
+        block(who, f"{runner} 會把讀到的字接在指令後面當參數，參數可能來自標準輸入，hook 看不到會不會加上 --no-index、"
+              "--untracked（Q8）", (STEP_RUNNER,) + STEP_SEARCH)
+    for name, _ in options:
+        if name in ("-c", "--config-env"):
+            block(f"{who} 前面的 git {name}", GIT_GREP_CONFIG, STEP_SEARCH)
+    for name in variables:
+        if name.startswith("GIT_CONFIG"):
+            block(f"{who} 前面的 {name}=", GIT_GREP_CONFIG, STEP_SEARCH)
+    for text, flag in git_grep_options(rest):
+        alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
+        block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", STEP_SEARCH)
 
 
 def file_rules(tool, tool_input):
@@ -361,7 +483,7 @@ def grep_rules(tool_input):
         if isinstance(value, str) and token_named(value):
             block(f"Grep 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
     block("Grep", "Grep 會讀搜尋範圍裡每個檔的內容；範圍裡指向 token 檔的 symlink，hook 只看輸入分不出來，Grep 跟不跟隨 symlink "
-          "文件沒寫、deny 規則對 Grep 只是 best-effort", STEP_READ)
+          "文件沒寫、deny 規則對 Grep 只是 best-effort", STEP_SEARCH)
 
 
 def glob_rules(tool_input):
