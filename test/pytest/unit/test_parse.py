@@ -542,6 +542,21 @@ def test_yaml_timestamps_read_back_the_same_values_and_types_after_another_value
     assert _typed(read_back) == _typed(expected)
 
 
+@pytest.mark.parametrize(
+    "value",
+    ["2001-12-15T00:00:00Z", datetime(2001, 12, 15, tzinfo=UTC)],
+    ids=["to-a-string", "to-another-moment"],
+)
+def test_a_changed_timestamp_is_written_as_the_new_value_not_the_original_spelling(value):
+    # 照原文寫回只給沒動過的時間戳：改成字串（介面送來的樣子）或另一個時刻，讀回的是新值與它的種類。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+    set_value(parsed, "ts", value)
+
+    read_back = values(parse(dump(parsed), "yaml"))["ts"]
+
+    assert _typed(read_back) == _typed(value)
+
+
 # ── F9 的邊界：介面送回整個清單時常見的幾種改法，沒改的部分都逐行不動 ──────────────
 # 介面的清單操作（web/index.html）：改值、刪一項、上下移、新增時複製最後一項。每一種送來的都是
 # 最外層的整個清單。新增的那一項怎麼寫這次不規定，只比對它以外的行。
