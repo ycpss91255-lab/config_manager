@@ -697,6 +697,38 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "程式名稱來自 shell 展開、後面有字面的 grep 而且有 git grep 會擋的寫法被擋，下一步有程式名稱寫成字面（#436）" {
+  run expect_bash_step "${STEP_PROGRAM}" "${WORK}" \
+    '"$GIT" grep --no-index x' \
+    '$G grep --untracked x' \
+    '$G -C .. grep --no-index x' \
+    '"$GIT" -c grep.fallbackToNoIndex=true grep x' \
+    'GIT_CONFIG_COUNT=1 "$GIT" grep x' \
+    '"$GIT" grep -Ocat x' \
+    '"$GIT" grep -n "$P"' \
+    '$SUDO grep -n "$P" file' \
+    '$SUDO grep -n x *.log'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開而沒有 git grep 會擋的寫法時放行：\"\$GIT\" grep -n x、\$SUDO grep -n x README.md、後面沒有 grep 的 \"\$PY\" -m pip install --no-index、\$CC -O2（#436）" {
+  run expect_bash allow "${WORK}" \
+    '"$GIT" grep -n x' \
+    '"$GIT" grep -n -e "$P"' \
+    '$SUDO grep -n x README.md' \
+    '"$PY" -m pip install --no-index -r req.txt' \
+    '$CC -O2 a.c'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開的 \"\$GIT\" grep -r x 照 #412 的遞迴搜尋規則照舊被擋（#436）" {
+  run expect_bash_step "${STEP_READ}" "${WORK}" '"$GIT" grep -r x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
