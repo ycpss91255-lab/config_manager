@@ -643,6 +643,30 @@ checkouts() {
   [ "$(bash_verdict 'git --git-dir="$D" grep --no-index x')" = deny ]
 }
 
+@test "經 xargs 執行、看不出子指令的 git 被擋（沒寫、來自展開、是 -I、-J、-i 的替換字串，或 -J 的字在子指令前面），下一步有 xargs 後面的 git 寫明字面的子指令（#436）" {
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" \
+    'xargs git' \
+    "printf 'grep\\n--untracked\\nx\\n' | xargs git" \
+    'xargs git $X' \
+    'xargs -I{} git {} -n x' \
+    'xargs -I% git % --untracked x' \
+    'xargs -J % git % -n x' \
+    'xargs -J % git -C % status' \
+    'xargs -i git {} -n x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "經 xargs 執行、子指令是字面而且不是替換字串的 git 放行：xargs git add、xargs -I{} git log -1 {}、xargs -I{} git -C {} status（#436）" {
+  run expect_bash allow "${WORK}" \
+    'xargs git add' \
+    'xargs -I{} git log -1 {}' \
+    'xargs -I{} git -C {} status' \
+    'xargs -I{} git -C {} pull'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
