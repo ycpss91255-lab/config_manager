@@ -14,7 +14,11 @@
 #   第 4 點  token 檔：Read／Edit／Write 的 file_path、Grep 的 path 與 glob、Glob 的 path 與 pattern、Bash 指令裡的每個字，
 #            檔名含 token 的 .md（不分大小寫）就擋。Grep 工具一律擋（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的
 #            symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 擋）；Bash 的遞迴搜尋（grep -r／-R、rg、
-#            find … -exec grep、xargs grep）也一律擋。兩者的下一步都是「要讀單一檔案就用 Read」。
+#            find … -exec grep、xargs grep）也一律擋。git grep 會讀沒追蹤檔或 repo 外檔的寫法也擋（#426）：帶 --no-index、
+#            --untracked（含至少到 --n／--u 的縮寫；-e、-f 的值與 -- 之後的字不算），前面有 git -c、--config-env 或
+#            GIT_CONFIG… 的變數設定（含 env 後面的），經 xargs、parallel 執行，git 的選項或子指令來自 shell 展開而後面有 grep
+#            或這兩個選項；經 git -C、find -exec 與 sudo 這類包裝程式執行的照同樣的規則。這幾種的下一步都是「要讀單一檔案就用
+#            Read」與「跨檔搜尋內容用 git grep」：不帶這些寫法的 git grep 只搜 repo 追蹤的檔。
 #   第 5 點  主 checkout 不切分支：git switch、git checkout <分支>／-b 的目錄從 hook 輸入的 cwd 開始，依序疊上 cd 與
 #            git -C；從那裡往上找 .git，只有確認是 linked worktree（gitdir 指到的管理目錄有 commondir，共用目錄底下的
 #            worktrees/<名稱> 就是它）才放行。git checkout -- <檔> 不擋。

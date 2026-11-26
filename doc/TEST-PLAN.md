@@ -2301,9 +2301,17 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | 不是入口的指令提到 cm_verify（`echo cm_verify_x`） | 放行 |
 | token 檔：Read `../api token.md`、`doc/API-Token.md`（不分大小寫），Edit、Write 指名的 token 檔，Bash `cat "~/x/My Token.md"`，Glob 的 `pattern` 是 `**/*token*.md` | 擋下 |
 | Read `doc/README.md`；Glob 的 `**/*`、`**/*.md`、`**/*.sh`（只回傳路徑） | 放行 |
-| Grep 工具一律擋：沒有 `glob`；`glob` 是 `**/*.md`、`*.{py,md}`、`*.p[y]`、`!*.py`、`*.*`；只給 `type: py`；`path` 是 `..`、`/tmp`、`~/x`；`path: src/a.py` 但沒有 `glob`；原本放行的 `path: src`、`glob: **/*.py` 與 `path: src/a.py`、`glob: **/*.py`、沒有 `path` 的 `glob: *.sh` | 擋下，下一步寫「要讀單一檔案就用 Read…」（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的 symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 一律擋；`path` 指檔案還是目錄 hook 不區分，所以單一檔案也擋） |
-| Bash 的遞迴搜尋：`grep -r ghp_ .`、`grep -r --include='*.py' x src`、`rg ghp_`、`rg -t py x`、`find . -name '*' -exec grep ghp_ {} +`，以及 `-R`、連寫的 `-rn`、`--recursive`、`-d recurse`、`xargs grep` | 擋下，下一步寫「要讀單一檔案就用 Read…」 |
+| Grep 工具一律擋：沒有 `glob`；`glob` 是 `**/*.md`、`*.{py,md}`、`*.p[y]`、`!*.py`、`*.*`；只給 `type: py`；`path` 是 `..`、`/tmp`、`~/x`；`path: src/a.py` 但沒有 `glob`；原本放行的 `path: src`、`glob: **/*.py` 與 `path: src/a.py`、`glob: **/*.py`、沒有 `path` 的 `glob: *.sh` | 擋下，下一步寫「要讀單一檔案就用 Read…」與「跨檔搜尋內容用 git grep…」（#426）（#412 本文 2026-11-25 改：搜尋範圍裡指向 token 檔的 symlink 讀不讀得到，hook 只看輸入分不出來、實測也做不到，照 Q8 一律擋；`path` 指檔案還是目錄 hook 不區分，所以單一檔案也擋） |
+| Bash 的遞迴搜尋：`grep -r ghp_ .`、`grep -r --include='*.py' x src`、`rg ghp_`、`rg -t py x`、`find . -name '*' -exec grep ghp_ {} +`，以及 `-R`、連寫的 `-rn`、`--recursive`、`-d recurse`、`xargs grep` | 擋下，下一步寫「要讀單一檔案就用 Read…」與「跨檔搜尋內容用 git grep…」（#426） |
 | Bash 的遞迴搜尋與 Grep 被擋時的下一步 | 不再寫「改用 Grep 工具」（Grep 一律擋之後，那句會叫人去用一個被擋的工具） |
+| `grep -r x .`、`rg x`、`find . -exec grep x {} +` 與 Grep 工具被擋時的下一步（#426） | 同時有「要讀單一檔案就用 Read」與「跨檔搜尋內容用 git grep…」；沒有不分種類的「Bash 的遞迴搜尋一律擋」；「下一步：」之後沒有日期與工作階段（日期與實測的工作階段寫在 `AGENTS.md` 與這裡，不放進 hook 印的下一步） |
+| git grep 會讀沒追蹤檔或 repo 外檔的寫法（#426）：`git grep --no-index x`、`git grep --untracked x`、縮寫的 `--untrack`、`--no-ind`、`--n`、`--u`，寫在 `-e` 的值後面的 `--untracked`、連寫在 `-O` 後面的 `-Oe --no-index`（`e` 是 `-O` 的值）；`git -C .. grep --no-index x`、`find . -exec git grep --untracked x {} +`；經 `sudo`、`doas`、`watch`、`caffeinate`、`stdbuf`、`unbuffer` 與 `env`、`nice`、`timeout`、`nohup` 執行的 | 擋下，下一步有「跨檔搜尋內容用 git grep…」 |
+| 經 `xargs`、`parallel` 執行的 git grep（#426）：`xargs git grep -n x`、`xargs git grep --no-index x`、`parallel git grep -n x ::: src` | 一律擋下（參數可能來自標準輸入，hook 看不到），下一步有「不經 xargs、parallel，直接下 git grep」 |
+| git 的全域選項或子指令來自 shell 展開，後面有字面的 `grep` 或 `--no-index`、`--untracked`（#426）：`git $OPTS grep x`、`git $SUB --no-index x` | 擋下，下一步有「git 的選項與子指令寫成字面」 |
+| 改 git 設定的寫法加在 git grep 前面（#426）：`git -c grep.fallbackToNoIndex=true grep x`、`git -c color.ui=never grep -n x`、`git --config-env=grep.fallbackToNoIndex=V grep x`、前面或 `env` 後面的 `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.fallbackToNoIndex GIT_CONFIG_VALUE_0=true` | 擋下，下一步有「前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定」 |
+| 不帶這些寫法的 git grep（#426）：`git grep -n x`、`git grep -n x -- '*.py'`、`git -C ../wt grep -n x`、`git grep -c x`（grep 的計數選項，不是全域的 `git -c`）、`git grep -n -e --no-index`、`git grep -n x -- --untracked`、`sudo git grep -n x`；`-f` 的值、連寫的 `-ne` 的值、不是 `--no-index` 前綴的 `--null` 與 `--name-only`、`--no-untracked`；grep 以外的子指令前面的 `git $OPTS`、`git -c`、`GIT_CONFIG…` | 放行 |
+| `find . -exec git grep -n x {} +`、`sudo git grep -r x`（#426） | 放行：照直接下 git grep 的規則，git grep 的子指令 grep 不再當成 find、sudo 執行的 grep（main `5601e7a` 上被那條規則擋下） |
+| git grep 要搜的字串是含 token 的 `.md` 檔名：`git grep -n 'token*.md'`；改搜不含副檔名的片段 `git grep -n 'token\*'`（#426） | 前者照 token 檔的規則擋下（#412 原本的行為），後者放行 |
 | Bash 搜尋指名的檔（`grep -n x README.md`、`grep -e r README.md`）、`find . -name '*.py'` | 放行 |
 | 主 checkout：`git switch main`；從 worktree `cd ../main-checkout && git checkout feat/x`、`git -C ../main-checkout switch feat/x`、`cd .. && git -C main-checkout switch feat/x`（`-C` 以 `cd` 之後的目錄解析）、`git -C .. -C main-checkout checkout -b feat/y` | 擋下，下一步寫「改到 worktree 裡做…」 |
 | 判斷不了目錄：`cd "$X" && git switch feat/x`、子 shell 裡的 `cd`、`cd -`、`git -C "$X"`、`GIT_DIR=…` | 擋下，下一步寫「改到 worktree 裡做，或寫明目錄…」 |
@@ -2335,7 +2343,13 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 - 回覆的散文用什麼語言（不經過工具）；`description` 只看有沒有中日韓文字，分不出繁簡。
 - Python 腳本自己開 docker、不在清單上的間接呼叫（別名、清單外的包裝程式、名稱來自變數又沒有字面線索的程式）；不是 shell 的可執行檔不在掃描範圍。
 - 自寫的程式（例如 Python 腳本）自己開檔讀 token 檔；檔名不含 `token` 的 token 檔（只能靠檔名比對）；Bash 裡用萬用字元指到 token 檔（例如 `cat ~/*.md`）；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（例如 `cat scratch/x.py`）：hook 只看指令文字，Read 工具讀同一個 symlink 會被 `Read(//**/*token*.md)` 的 deny 規則擋（桌面 app 實測，PR #425）；命令列補測時 `cat scratch/x.py` 被拒絕，但分不出是 deny 規則，還是非互動模式自動拒絕要確認的動作（PR #425）。
-- Grep 工具一律被擋，跨檔搜尋內容沒有替代做法：要讀單一檔案改用 Read；替代做法交給 #412 的後續 issue。原本的放行條件（`glob` 寫死副檔名、不是 md，`path` 是 repo 裡的相對路徑）要靠實測確認 Grep 不會讀到搜尋範圍裡指向 token 檔的 symlink，2026-11-25 的三個工作階段（桌面 app 的 Code 分頁、Claude Code 命令列 2.1.332 的 `claude -p`、審稿工作階段）的工具清單裡都沒有 Grep、Glob，原因沒有查證，實測做不到（PR #425 的「轉成可合併前核對」）；之後在有 Grep 工具的工作階段實測沒讀到，再另開 issue 放寬。
+- Grep 工具一律被擋：要讀單一檔案改用 Read，跨檔搜尋內容改用 `git grep`（#426：不加 `--no-index`、`--untracked`，前面不加 `git -c`、`--config-env` 或 `GIT_CONFIG…` 的設定，只搜 repo 追蹤的檔）。原本的放行條件（`glob` 寫死副檔名、不是 md，`path` 是 repo 裡的相對路徑）要靠實測確認 Grep 不會讀到搜尋範圍裡指向 token 檔的 symlink，2026-11-25 的三個工作階段（桌面 app 的 Code 分頁、Claude Code 命令列 2.1.332 的 `claude -p`、審稿工作階段）的工具清單裡都沒有 Grep、Glob，原因沒有查證，實測做不到（PR #425 的「轉成可合併前核對」）；之後在有 Grep 工具的工作階段實測沒讀到，再另開 issue 放寬。
+- `git grep` 擋不住的（#426）：
+  - 全域或系統的 git 設定（`~/.gitconfig`、`$XDG_CONFIG_HOME/git/config`、系統設定）已經設了 `grep.fallbackToNoIndex=true`，或用 `HOME`、`XDG_CONFIG_HOME` 指到別的設定檔（依 git-grep 文件，這個設定只在 repo 外執行時生效，那時讀不到 repo 的設定；hook 不讀設定，#412 的 Q1）；
+  - 前一段先 `export GIT_CONFIG_…`（hook 只看同一段指令前面與 `env` 後面的變數設定；同下面的「先 `export GIT_DIR`」）；
+  - git 的別名、自寫的腳本裡的 `git grep`。
+- #412 規則的缺口（這幾種搜尋寫法不在 #426 的範圍）：搜尋的檔來自指令替換（例如 `grep -n x $(git ls-files '*.py')`）、shell 的遞迴萬用字元（zsh 或開了 globstar 的 bash 的 `**/*.py`）、清單外的搜尋程式（例如 ag、ack）。
+- 會被擋、要改寫法（#426 寫明）：搜的字串本身是含 token 的 `.md` 檔名時（例如 `git grep -n 'token*.md'`，想找 `Read(//**/*token*.md)` 這條規則寫在哪裡），照 #412 的 token 檔規則擋下。hook 看指令裡每個字的檔名（Q1 只看輸入），分不出那個字是要搜的字串還是要讀的檔，照 Q8 維持擋下；改搜不含副檔名的片段（例如 `git grep -n 'token\*'`）。這個改寫法只限 `git grep` 要搜的字串，不能用來讀或搜 token 檔本身（`AGENTS.md`「不讀 token 檔」那條照樣適用）。這是 #412 原本的行為；開始推薦 `git grep` 之後比較容易碰到，所以寫明。
 - 依連接埠連進驗證環境；不經清單上入口碰驗證環境的寫法。
 - 主 checkout 裡用別的寫法切分支（腳本裡、git 的別名、先 `export GIT_DIR`）。
 - Codex、cloud 工作階段、`disableAllHooks`、其他工具與用戶端。
