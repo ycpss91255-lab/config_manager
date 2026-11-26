@@ -17,6 +17,7 @@ setup() {
   STEP_GIT_GREP="跨檔搜尋內容用 git grep"
   STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
   STEP_LITERAL="git 的選項與子指令寫成字面"
+  STEP_CONFIG="前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -416,6 +417,17 @@ checkouts() {
   run expect_bash_step "${STEP_LITERAL}" "${WORK}" \
     'git $OPTS grep x' \
     'git $SUB --no-index x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "改 git 設定的 git -c、--config-env 與 GIT_CONFIG 開頭的變數設定（含 env 後面的）加在 git grep 前面被擋，下一步有前面不加這些設定（#426）" {
+  run expect_bash_step "${STEP_CONFIG}" "${WORK}" \
+    "git -c grep.fallbackToNoIndex=true grep x" \
+    "git -c color.ui=never grep -n x" \
+    "git --config-env=grep.fallbackToNoIndex=V grep x" \
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.fallbackToNoIndex GIT_CONFIG_VALUE_0=true git grep x" \
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=grep.fallbackToNoIndex GIT_CONFIG_VALUE_0=true git grep x"
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
