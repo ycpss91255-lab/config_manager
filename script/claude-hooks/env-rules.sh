@@ -75,6 +75,7 @@ STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git gr
 STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
 STEP_LITERAL = "git 的選項與子指令寫成字面"
 STEP_GREP_ARGS = "git grep 的選項寫成字面；要搜的字串來自變數時寫成 -e \"$X\"，路徑放在 -- 後面"
+STEP_XARGS = "xargs 後面的 git 寫明字面的子指令（不用替換字串）"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -271,7 +272,8 @@ def analyze_runner(runner, args, state):
                 skips.add(len(args) - len(rest) - 1)
             # 包裝程式後面、git 前面的變數設定（sudo NAME=值、sudo env NAME=值）也算
             variables = VARIABLES + [name for name in map(assigned, args[:i]) if name]
-            git_rules(args[i + 1:], variables, runner or "這條指令")
+            git_rules(args[i + 1:], variables, runner or "這條指令", args[:i])
+
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -498,16 +500,82 @@ def git_words(args):
     return options, "", [], None
 
 
-def git_rules(args, variables, runner):
+def git_rules(args, variables, runner, between=()):
     """git 後面的字 args 的規則（#426、#436）。variables 是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的
-    包裝程式（直接下的是 None）。"""
+    包裝程式（直接下的是 None）；between 是包裝程式和 git 之間的字（xargs 的選項）。"""
     who = "git" if runner is None else f"{runner} 執行的 git"
     options, subcommand, rest, unclear = git_words(args)
+    if runner == "xargs":
+        xargs_rules(who, args, between, subcommand, rest)
     if unclear is not None:
         block(who, f"{unclear}，判斷不了實際執行的是哪個子指令、帶了哪些選項（Q8）", (STEP_LITERAL,) + STEP_SEARCH)
         return
     if subcommand == "grep":  # 子指令是字面、不是 grep 的，後面的字不看
         git_grep_checks(f"{who} grep", options, rest, variables, runner, ())
+
+
+XARGS_VALUES = "adEIJLnPRSs"  # 要值的短選項（macOS 與 GNU 的 xargs）：值連寫在後面，或是下一個字
+XARGS_OPTIONAL = "eil"        # GNU 的 -e[eof]、-i[replace]、-l[max-lines]：值只能連寫
+XARGS_LONG_VALUES = {"--arg-file", "--delimiter", "--max-args", "--max-procs", "--max-chars", "--process-slot-var"}
+
+
+def xargs_replacements(words):
+    """(xargs 的選項指定的替換字串 [(選項, 字串)], 判斷不了)。words 是 xargs 和它執行的程式之間的字。-I、-J 照寫；GNU 的
+    -i[replace]、--replace[=replace] 沒寫值時是 {}（GNU xargs(1)）。選項或替換字串來自 shell 展開、替換字串是空的，就判斷不了。"""
+    found = []
+    i = 0
+    while i < len(words):
+        word = words[i]
+        if not word.static:
+            return found, True
+        text = word.text
+        if text.startswith("--"):
+            name, equals, value = text.partition("=")
+            if name == "--replace":
+                found.append(("--replace", value if equals else "{}"))
+            elif name in XARGS_LONG_VALUES and not equals:
+                i += 1
+        elif text.startswith("-") and len(text) > 1:
+            for j, letter in enumerate(text[1:], 2):
+                tail = text[j:]
+                if letter in "IJ":
+                    if not tail:
+                        i += 1
+                        if i >= len(words) or not words[i].static:
+                            return found, True
+                        tail = words[i].text
+                    found.append((f"-{letter}", tail))
+                    break
+                if letter == "i":
+                    found.append(("-i", tail or "{}"))
+                    break
+                if letter in XARGS_OPTIONAL:
+                    break
+                if letter in XARGS_VALUES:
+                    if not tail:
+                        i += 1
+                    break
+        i += 1
+    return found, any(not text for _, text in found)
+
+
+def xargs_rules(who, args, between, subcommand, rest):
+    """經 xargs 執行的 git（#436）：子指令沒寫、來自展開或會拆成好幾個字，子指令含替換字串，或 -J 的字在子指令前面就擋。xargs
+    沒有替換選項時把讀到的字接在最後（xargs(1)），所以子指令寫成字面、又不是替換字串，標準輸入就變不成子指令。"""
+    step = (STEP_XARGS,) + STEP_SEARCH
+    if not subcommand:
+        block(who, "子指令沒寫或來自 shell 展開，xargs 會把標準輸入讀到的字接在 git 後面，子指令可能就是那些字（Q8）", step)
+        return
+    replacements, unclear = xargs_replacements(between)
+    if unclear:
+        block(who, "xargs 的選項或替換字串來自 shell 展開（或是空的），判斷不了子指令會不會被換成標準輸入讀到的字（Q8）", step)
+        return
+    head = args[:len(args) - len(rest)]  # 全域選項與子指令
+    for option, text in replacements:
+        if text in subcommand:
+            block(who, f"子指令 {subcommand} 含 xargs {option} 的替換字串 {text}，子指令會被換成標準輸入讀到的字（Q8）", step)
+        elif option == "-J" and any(text in w.text for w in head):
+            block(who, f"xargs -J 的替換字串 {text} 在子指令前面：讀到的參數全部放在那裡，子指令可能就是其中一個（Q8）", step)
 
 
 GIT_GREP_SPLIT = ("展開後會拆成好幾個字（沒加雙引號的變數、指令替換、算術展開，\"$@\"、萬用字元、大括號展開），其中一個可能就是 "
