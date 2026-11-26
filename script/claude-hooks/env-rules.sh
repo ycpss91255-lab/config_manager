@@ -188,6 +188,7 @@ def dispatch(program, args, state, assignments, words):
                 ask(f"{program} {sourced}")
     elif program == "git":
         analyze_git(args, state, assignments)
+        git_grep_rules(args, None)
     elif program in GREPS:
         analyze_grep(program, args)
     elif program == "rg":
@@ -210,9 +211,11 @@ def indirect(words):
 
 
 def analyze_runner(runner, args, state):
-    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問，有 grep、rg 就擋。"""
+    """把後面的字當成指令執行的程式（xargs、sudo、find -exec…）：裡面有清單上的入口就先問，有 grep、rg 就擋；git grep 照
+    直接下的規則（#426），它的子指令 grep 不當成 grep 程式。"""
+    skips = set()  # git grep 的子指令 grep 在 args 裡的位置
     for i, word in enumerate(args):
-        if not word.static:
+        if not word.static or i in skips:
             continue
         name = os.path.basename(word.text)
         script = entry_script(word, state)
@@ -228,8 +231,13 @@ def analyze_runner(runner, args, state):
                       "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
             else:
                 analyze_grep(name, args[i + 1:])
-        elif name == "git" and runner in ("sudo", "doas"):
-            analyze_git(args[i + 1:], state if state is not None else State(None), [])
+        elif name == "git":
+            if runner in ("sudo", "doas"):
+                analyze_git(args[i + 1:], state if state is not None else State(None), [])
+            _, subcommand, rest = git_parts(args[i + 1:])
+            if subcommand == "grep":
+                skips.add(len(args) - len(rest) - 1)
+            git_grep_rules(args[i + 1:], runner or "這條指令")
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -349,6 +357,63 @@ def analyze_find(args, state):
         if word.static and word.text in ("-exec", "-execdir", "-ok", "-okdir"):
             analyze_runner("find", args[i + 1:], state)
             return
+
+
+# git grep（#426）：不帶 --no-index、--untracked 的 git grep 只搜 repo 追蹤的檔（git-grep(1)），是跨檔搜尋內容的替代做法；會讀
+# 沒追蹤檔或 repo 外檔的寫法擋下。只看指令文字（Q1），不讀 git 設定。
+
+GIT_GREP_FLAGS = {"--no-index": "會搜目前目錄底下不歸 git 管的檔，在 repo 外執行時就是那個資料夾裡的每個檔",
+                  "--untracked": "會連 repo 裡沒追蹤的檔一起搜"}
+GIT_GREP_VALUE_SHORT = "ef"       # -e、-f 的值是要搜的字串、讀字串的檔，不算選項
+GIT_GREP_ATTACHED_SHORT = "ABCmO"  # 連寫時，後面的字是它的值（-O 只收連寫的值）
+
+
+def git_grep_flag(text):
+    """--no-index、--untracked，或它們至少到 --n／--u 的前綴（長選項可以縮寫，照 Q8 都算）；--x=值 只看 = 前面。不是就回 None。"""
+    name = text.split("=", 1)[0]
+    if len(name) < 3:
+        return None
+    for flag in GIT_GREP_FLAGS:
+        if flag.startswith(name):
+            return flag
+    return None
+
+
+def git_grep_options(args):
+    """git grep 的參數裡寫成選項的 --no-index、--untracked（含縮寫）：[(那個字, 完整的選項名)]。-e、-f 的值與 -- 之後的字
+    不算；來自 shell 展開的字看展開之前的字面部分。"""
+    found = []
+    i = 0
+    while i < len(args):
+        word = args[i]
+        text = word.text if word.static else word.prefix
+        if word.static and text == "--":
+            break
+        if text.startswith("--"):
+            flag = git_grep_flag(text)
+            if flag is not None:
+                found.append((text, flag))
+        elif text.startswith("-") and len(text) > 1:
+            for j, option in enumerate(text[1:]):
+                if option in GIT_GREP_VALUE_SHORT:
+                    if word.static and not text[j + 2:]:
+                        i += 1  # 值是下一個字
+                    break
+                if option in GIT_GREP_ATTACHED_SHORT:
+                    break
+        i += 1
+    return found
+
+
+def git_grep_rules(args, runner):
+    """args 是 git 後面的字；runner 是執行它的包裝程式（直接下的是 None）。"""
+    _, subcommand, rest = git_parts(args)
+    if subcommand != "grep":
+        return
+    who = "git grep" if runner is None else f"{runner} 執行的 git grep"
+    for text, flag in git_grep_options(rest):
+        alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
+        block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", STEP_SEARCH)
 
 
 def file_rules(tool, tool_input):
