@@ -10,6 +10,9 @@
 # hook 的 JSON）。這段 python 提供：
 #
 #   Lexer、build          把指令文字讀成依序的簡單指令（字、引號、指令替換、heredoc、&&／;、子 shell）
+#   Word                  一個字：去掉引號後的字面文字（text）、第一個展開前的字面部分（prefix）、展開的種類（dynamic）；
+#                         splits 記展開後會不會拆成好幾個字（沒加雙引號的變數、"$@"、萬用字元、大括號展開…，#436，定義在
+#                         SPLITS_QUOTED 前面）。splits 只是多記的欄位，其他欄位與各函式的回傳值不因為它改變
 #   run_script、analyze   依序分析每一條簡單指令：指令替換裡的、cd 之後的目錄、bash -c、eval、tee 與重新導向寫出的檔
 #   command_words         拿掉變數設定、if／!／time 這類前綴與 env、command、nohup 這類包裝，留下真正執行的字
 #   parse_options         依旗標清單把參數分成旗標、值與位置參數，清單外的旗標另外列出
@@ -60,6 +63,7 @@ class Word:
         self.dynamic = None     # 有 shell 展開時，記下是哪一種
         self.quoted = False
         self.nested = []        # 指令替換、反引號、程序替換裡的指令（token 串）
+        self.splits = False     # 展開後會不會拆成好幾個字（#436）：見 Lexer.brace 與 SPLITS_QUOTED 前面的說明
 
     @property
     def static(self):
@@ -81,11 +85,21 @@ def sub_word(word, start):
     out.prefix = word.prefix[start:]
     out.dynamic = word.dynamic
     out.nested = word.nested
+    out.splits = word.splits
     return out
 
 
 SPACE = " \t"
 META = set(" \t\n;&|()<>")
+
+# Word.splits（#436 調整需求第 1 點）：這個字有下面任一種，展開後就可能是好幾個字。
+#   - 不在雙引號裡的變數、指令替換（含反引號）、算術展開（bash 會拆字、zsh 的陣列會展開成好幾個字）；
+#   - 雙引號裡的 "$@" 與下面 SPLITS_QUOTED 認得的 ${…}："${@}"、"${名稱[@]}"（含 "${名稱[@]:1}" 這類接了運算的）、
+#     "${!名稱[@]}"、"${!前綴@}"，zsh 的 "${(旗標)名稱}" 與 "$名稱[@]"（hook 不知道 Bash 工具用哪一種 shell，兩種都算）；
+#   - 沒加引號的萬用字元（*、?、[）；
+#   - 沒加引號的大括號展開：{ 和 } 之間有沒加引號的 , 或 ..（Lexer.brace）。
+# $'…'、~使用者、程序替換展開後是一個字，不算。text、prefix、dynamic 不因為這個欄位改變：大括號展開只記在這裡，不算 dynamic。
+SPLITS_QUOTED = re.compile(r"@|!?[A-Za-z_][A-Za-z0-9_]*\[@\]|![A-Za-z_][A-Za-z0-9_]*@|\(")
 OPERATORS = ("&&", "||", ";;&", ";;", ";&", "|&", ";", "&", "|", "(", ")")
 REDIRECTIONS = ("<<<", "<<-", "<<", "&>>", "&>", ">>", ">|", ">&", "<&", "<>", ">", "<")
 
@@ -99,6 +113,8 @@ class Lexer:
         self.word = None
         self.heredocs = []        # 這一行結束後要讀內文的 (分隔字, 去掉開頭 tab, token)
         self.depth = 0
+        self.brace_word = None    # Lexer.brace 正在看的字，與那個字裡還沒結束的 {（有沒有碰到 , 或 ..）
+        self.braces = []
 
     def peek(self, offset=0):
         index = self.i + offset
@@ -215,6 +231,7 @@ class Lexer:
             self.i = self.dollar(self.i, word, False)
         elif c == "`":
             self.i = self.backtick(self.i, word)
+            word.splits = True
         elif c == "\\":
             if self.i + 1 < len(s):
                 word.add(s[self.i + 1])
@@ -223,6 +240,7 @@ class Lexer:
         elif c in "*?[":
             word.add(c)
             word.expand("萬用字元")
+            word.splits = True
             self.i += 1
         elif c == "~" and word.text == "" and word.static and not word.quoted:
             following = self.peek(1)
@@ -233,8 +251,22 @@ class Lexer:
                 word.expand("~使用者")
             self.i += 1
         else:
+            self.brace(c, word)
             word.add(c)
             self.i += 1
+
+    def brace(self, c, word):
+        """沒加引號的大括號展開（{a,b}、{1..3}）：{ 和 } 之間有沒加引號的 , 或 .. 才算，算了就記 word.splits（#436）。
+        加了引號或跳脫的 {、,、} 不經過這裡。"""
+        if self.brace_word is not word:
+            self.brace_word, self.braces = word, []
+        if c == "{":
+            self.braces.append(False)
+        elif c == "}" and self.braces:
+            if self.braces.pop():
+                word.splits = True
+        elif self.braces and (c == "," or (c == "." and self.peek(1) == ".")):
+            self.braces[-1] = True
 
     def double_quoted(self, i, word):
         s = self.s
@@ -265,6 +297,8 @@ class Lexer:
         s = self.s
         following = s[i + 1] if i + 1 < len(s) else ""
         if following == "(":
+            if not in_double_quotes:
+                word.splits = True
             if i + 2 < len(s) and s[i + 2] == "(":
                 word.expand("算術展開")
                 return self.skip_arithmetic(i + 3)
@@ -274,7 +308,10 @@ class Lexer:
             return end
         if following == "{":
             word.expand("變數")
-            return self.skip_braces(i + 2, word)
+            end = self.skip_braces(i + 2, word)
+            if not in_double_quotes or SPLITS_QUOTED.match(s, i + 2):
+                word.splits = True
+            return end
         if following == "'" and not in_double_quotes:
             word.expand("$'…' 引號")
             return self.skip_ansi(i + 2)
@@ -286,9 +323,13 @@ class Lexer:
             while end < len(s) and s[end] in NAME_CHARS:
                 end += 1
             word.expand("變數")
+            if not in_double_quotes or s.startswith("[@]", end):
+                word.splits = True
             return end
         if following and following in "0123456789@*#?$!-":
             word.expand("變數")
+            if not in_double_quotes or following == "@":
+                word.splits = True
             return i + 2
         word.add("$")
         return i + 1
