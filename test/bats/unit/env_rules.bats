@@ -143,6 +143,18 @@ blocked_searches() {
   cp "${WORK}/err.txt" "${WORK}/search-4.txt"
 }
 
+# blocked_unclear：#436 新擋的六種寫法各呼叫一次（參數來自展開、子指令來自展開、xargs 看不出子指令、watch、程式名稱來自展開、
+# -O），標準錯誤依序存成 unclear-1.txt～unclear-6.txt。
+blocked_unclear() {
+  local i=0 command
+  for command in 'git grep -n "$PATTERN"' 'git $X' 'xargs git' 'watch git status' '"$GIT" grep --no-index x' \
+    'git grep -O x'; do
+    i=$((i + 1))
+    bash_call "${command}"
+    cp "${WORK}/err.txt" "${WORK}/unclear-${i}.txt"
+  done
+}
+
 # commit <repo>：在 <repo> 留一個空的 commit（只有規格自己呼叫 git；hook 不呼叫）。
 commit() {
   git -C "$1" -c user.name=spec -c user.email=spec@example.invalid commit -q --allow-empty -m init
@@ -769,6 +781,22 @@ checkouts() {
     'git grep --or -e a -e b'
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "#436 新擋的寫法被擋時，下一步也有要讀單一檔案就用 Read 與跨檔搜尋內容用 git grep，後者寫明不加 -O；下一步裡沒有日期與工作階段（#436）" {
+  local file steps failed=0
+  blocked_unclear
+
+  for file in "${WORK}"/unclear-[1-6].txt; do
+    steps="$(sed -n '/下一步：/,$p' "${file}")"
+    if ! grep -qF "${STEP_READ}" "${file}" || ! grep -qF "${STEP_NO_PAGER}" "${file}" || [ -z "${steps}" ] ||
+      printf '%s\n' "${steps}" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}|工作階段'; then
+      printf '%s 的下一步少了其中一句，或有日期或工作階段：\n' "${file##*/}"
+      cat "${file}"
+      failed=1
+    fi
+  done
+  [ "${failed}" -eq 0 ]
 }
 
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
