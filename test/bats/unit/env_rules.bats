@@ -638,6 +638,11 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "全域選項寫成 --名稱=\"\$值\" 而子指令是 grep 時照 git grep 的規則判斷：git --git-dir=\"\$D\" grep -n x 放行、git --git-dir=\"\$D\" grep --no-index x 被擋（#436）" {
+  [ "$(bash_verdict 'git --git-dir="$D" grep -n x')" = allow ]
+  [ "$(bash_verdict 'git --git-dir="$D" grep --no-index x')" = deny ]
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
