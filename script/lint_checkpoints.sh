@@ -117,7 +117,9 @@ _check_issue() {
     counter=$((counter + 1))
     return 0
   fi
-  body="$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("body") or "")' <<<"${raw}")"
+  # issue 內文可能是 CRLF 換行（#418 的原始內文就是）。下面逐行讀時 read -r 不會去掉行尾的 \r，取出的
+  # 主旨會帶著它，永遠和 git log 的主旨不相等（#420）。所以讀進來就先把 CRLF 換成 LF，再計數與比對。
+  body="$(python3 -c 'import json, sys; print((json.load(sys.stdin).get("body") or "").replace("\r\n", "\n"))' <<<"${raw}")"
   printf 'lint_checkpoints: 識別 issue #%s updatedAt=%s\n' "${issue}" \
     "$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("updatedAt"))' <<<"${raw}")"
 

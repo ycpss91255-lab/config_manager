@@ -177,3 +177,21 @@ stub_gh() {
   [[ "${output}" == *"updatedAt=2026-11-21T00:00:00Z"*"body_sha256=${body_sha}"* ]]
   [[ "${output}" == *"識別 issue #42 updatedAt=2026-11-21T00:00:00Z"* ]]
 }
+
+@test "issue 內文是 CRLF 換行、勾選行的主旨和 git 歷史逐字相同時通過（#420）" {
+  # issue 內文可能是 CRLF 換行（#418 的原始內文就是）。逐行讀進來時每一行都帶著行尾的 \r，取出的主旨
+  # 要和 git log 的主旨逐字相同，\r 不能跟著進去。兩條勾選行：只去掉整份內文最後那個 \r 不夠。
+  stub_gh $'## 驗收條件\r\n\r\n- [x] 第一條 — '"${SUBJECT}"$'\r\n- [x] 第二條 — chore(base): 起點\r\n'
+
+  run "${LINT}" 1 "${BASE}"
+  [ "${status}" -eq 0 ]
+}
+
+@test "issue 內文是 CRLF 換行時，記的主旨在 git 歷史裡找不到仍被擋下（#420）" {
+  # 守門用：去掉 \r 之後第 4 條規則照樣比對，不是遇到 CRLF 就不比。
+  stub_gh $'- [x] 第一條 — feat(x): 這筆 commit 不存在\r\n'
+
+  run "${LINT}" 1 "${BASE}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"這筆 commit 不存在"* ]]
+}
