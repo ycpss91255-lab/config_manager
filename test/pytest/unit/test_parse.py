@@ -4,7 +4,7 @@
 字串餵進去，不碰磁碟。
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -90,7 +90,11 @@ def _typed(value):
     if isinstance(value, list):
         return [_typed(item) for item in value]
     kinds = (bool, int, float, datetime, date, str)
-    return next((kind for kind in kinds if isinstance(value, kind)), type(value)), value
+    kind = next((kind for kind in kinds if isinstance(value, kind)), type(value))
+    if kind is datetime:
+        # 帶時區的 datetime 只比時刻：`-05:00` 與 `Z` 的同一刻也相等，時區位移另外比。
+        return kind, value, value.utcoffset()
+    return kind, value
 
 
 _CENTER_BIG = {"x": 1, "y": 2, "r": 10, "label": "center/big"}
@@ -514,6 +518,28 @@ def test_changing_another_yaml_value_keeps_untouched_timestamps_as_written(path,
     set_value(parsed, path, value)
 
     assert _lines_other_than(dump(parsed), path) == _lines_other_than(_TIMESTAMPS_YAML, path)
+
+
+def test_yaml_timestamps_read_back_the_same_values_and_types_after_another_value_changes():
+    # 只改 n，寫出後再讀：時間戳、日期仍是原本的時刻、時區位移與種類（期望值照 YAML timestamp 的寫法：
+    # `.10` 是 0.1 秒、`-5` 是 UTC-5、`Z` 是 UTC、沒寫時區的是不帶時區的時刻）。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+    set_value(parsed, "n", 2)
+
+    read_back = values(parse(dump(parsed), "yaml"))
+
+    moment = datetime(2001, 12, 14, 21, 59, 43, 100000, tzinfo=timezone(timedelta(hours=-5)))
+    day = date(2001, 12, 14)
+    expected = {
+        "ts": moment,
+        "sp": moment,
+        "utc": datetime(2001, 12, 14, 21, 59, 43, tzinfo=UTC),
+        "naive": datetime(2001, 12, 14, 21, 59, 43),
+        "d": day,
+        "n": 2,
+        "l": [moment, day, 1],
+    }
+    assert _typed(read_back) == _typed(expected)
 
 
 # ── F9 的邊界：介面送回整個清單時常見的幾種改法，沒改的部分都逐行不動 ──────────────
