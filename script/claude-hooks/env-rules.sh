@@ -64,7 +64,10 @@ STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容
                "不啟動、不停止、不重建、不改；要操作請維護者自己執行")
 STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段的規則」）；需要 token 的步驟請維護者自己執行"
 STEP_READ = ("要讀單一檔案就用 Read（Read 有 Read(//**/*token*.md) 的 deny 規則，照 symlink 解析到的檔比對）；"
-             "Grep 工具與 Bash 的遞迴搜尋一律擋（#412 調整需求第 4 點）")
+             "Grep 工具、Bash 的 grep -r、rg 這類遞迴搜尋，與 git grep 會讀沒追蹤檔或 repo 外檔的寫法一律擋（#412、#426）")
+STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untracked，前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定，"
+                 "只搜 repo 追蹤的檔")
+STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -78,7 +81,7 @@ STEP_ENTRIES = "確認 script/claude-hooks/docker-entrypoints.txt 在這個簽�
 COMMANDS = "docker／git／grep 這類指令"
 UNPARSABLE = "判斷不了它會不會開 docker、讀 token 檔或在主 checkout 切分支"
 
-DENY = []  # (位置, 原因, 下一步)
+DENY = []  # (位置, 原因, 下一步)；下一步是一句，或依序的幾句（tuple）
 ASK = []   # 位置
 
 
@@ -101,8 +104,9 @@ def finish():
         steps = []
         for where, why, step in DENY:
             print(f"{TAG}:   - {where}：{why}", file=err)
-            if step not in steps:
-                steps.append(step)
+            for line in step if isinstance(step, tuple) else (step,):
+                if line not in steps:
+                    steps.append(line)
         print(f"{TAG}: 下一步：", file=err)
         for step in steps:
             print(f"{TAG}:   - {step}", file=err)
@@ -188,7 +192,7 @@ def dispatch(program, args, state, assignments, words):
         analyze_grep(program, args)
     elif program == "rg":
         block("rg", "rg 會讀搜尋範圍裡每個檔的內容；它的設定檔、跟不跟隨 symlink 都會改變實際的搜尋範圍，只看指令判斷不了"
-              "會不會讀到 token 檔", STEP_READ)
+              "會不會讀到 token 檔", STEP_SEARCH)
     elif program == "find":
         analyze_find(args, state)
     elif program in RUNNERS:
@@ -221,7 +225,7 @@ def analyze_runner(runner, args, state):
         elif name in GREPS or name == "rg":
             if runner in ("xargs", "find") or name == "rg":
                 block(f"{runner or '這條指令'} 執行的 {name}", f"{name} 交給別的程式執行，搜尋哪些檔在執行時才決定，"
-                      "hook 判斷不了會不會讀到 token 檔", STEP_READ)
+                      "hook 判斷不了會不會讀到 token 檔", STEP_SEARCH)
             else:
                 analyze_grep(name, args[i + 1:])
         elif name == "git" and runner in ("sudo", "doas"):
@@ -335,7 +339,7 @@ def analyze_grep(program, args):
                     break
         if recursive is not None:
             block(f"{program} {recursive}", "遞迴搜尋會讀目錄底下每個檔的內容；Read 的 deny 規則不涵蓋這類指令，grep 跟不跟隨 "
-                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_READ)
+                  "symlink 也會改變實際的搜尋範圍，只看指令判斷不了會不會讀到 token 檔", STEP_SEARCH)
             return
         i += 1
 
@@ -361,7 +365,7 @@ def grep_rules(tool_input):
         if isinstance(value, str) and token_named(value):
             block(f"Grep 的 {field} {value}", "指名了檔名含 token 的 .md", STEP_TOKEN)
     block("Grep", "Grep 會讀搜尋範圍裡每個檔的內容；範圍裡指向 token 檔的 symlink，hook 只看輸入分不出來，Grep 跟不跟隨 symlink "
-          "文件沒寫、deny 規則對 Grep 只是 best-effort", STEP_READ)
+          "文件沒寫、deny 規則對 Grep 只是 best-effort", STEP_SEARCH)
 
 
 def glob_rules(tool_input):
