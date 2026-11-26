@@ -36,7 +36,8 @@ class LocatingConstructor(RoundTripConstructor):
         try:
             return super().construct_object(node, deep)
         except (IndexError, ValueError) as exc:
+            # 只轉述、不加自己的話：這段會成為 `SyntaxParse` 的 `reason`，T6 定的是解析器原文
+            # （ruamel 認出的型別＋轉換時的訊息）。中文的那一句與「下一步：」由 `_syntax_error`
+            # 組，這裡再寫一次會重複。
             kind = next((name for tag, name in _KINDS if node.tag == tag), "value")
-            raise ConstructorError(
-                problem=f"failed to construct {kind}: {exc}", problem_mark=node.start_mark
-            ) from exc
+            raise ConstructorError(problem=f"{kind}: {exc}", problem_mark=node.start_mark) from exc
