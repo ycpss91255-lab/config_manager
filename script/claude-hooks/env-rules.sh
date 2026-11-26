@@ -69,6 +69,7 @@ STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untrack
                  "只搜 repo 追蹤的檔")
 STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
 STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
+STEP_LITERAL = "git 的選項與子指令寫成字面"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -409,6 +410,12 @@ def git_grep_options(args):
 def git_grep_rules(args, runner):
     """args 是 git 後面的字；runner 是執行它的包裝程式（直接下的是 None）。"""
     _, subcommand, rest = git_parts(args)
+    if subcommand is None:  # 全域選項或子指令來自 shell 展開：rest 從那個字開始
+        if any(w.static and w.text == "grep" for w in rest) or git_grep_options(rest):
+            block("git" if runner is None else f"{runner} 執行的 git", "git 的選項或子指令來自 shell 展開，後面又有 grep 或 "
+                  "--no-index、--untracked，判斷不了會不會是讀沒追蹤檔或 repo 外檔的 git grep（Q8）",
+                  (STEP_LITERAL,) + STEP_SEARCH)
+        return
     if subcommand != "grep":
         return
     who = "git grep" if runner is None else f"{runner} 執行的 git grep"
