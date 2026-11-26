@@ -745,6 +745,32 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "git grep 的 -O、--open-files-in-pager 與它至少到 --o 的前綴被擋，下一步有用 git grep -l 列出檔名，再用 Read 讀（#436）" {
+  run expect_bash_step "${STEP_PAGER}" "${WORK}" \
+    'git grep -O x' \
+    'git grep -Ocat x' \
+    'git grep -nO x' \
+    'git grep --open-files-in-pager=cat x' \
+    'git grep --op x' \
+    'git grep --o x' \
+    "git grep -O'cat \"~/x/My Token.md\";:' x" \
+    'sudo git grep -Ovim x' \
+    'find . -exec git grep -O x {} +'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "-O 不是選項時放行：git grep -l x、-e 的值、-- 之後的 -O、--no-open-files-in-pager、--or（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git grep -l x' \
+    'git grep -n -e -O x' \
+    'git grep -n x -- -O' \
+    'git grep --no-open-files-in-pager x' \
+    'git grep --or -e a -e b'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
