@@ -15,6 +15,7 @@ setup() {
   WORK="$(cd -- "$(mktemp -d)" && pwd -P)"
   STEP_READ="要讀單一檔案就用 Read"
   STEP_GIT_GREP="跨檔搜尋內容用 git grep"
+  STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -397,6 +398,15 @@ checkouts() {
     "nice git grep --no-index x" \
     "timeout 5 git grep --untracked x" \
     "nohup git grep --no-index x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "經 xargs、parallel 執行的 git grep 一律被擋，下一步有不經 xargs、parallel，直接下 git grep（#426）" {
+  run expect_bash_step "${STEP_RUNNER}" "${WORK}" \
+    "xargs git grep -n x" \
+    "xargs git grep --no-index x" \
+    "parallel git grep -n x ::: src"
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
