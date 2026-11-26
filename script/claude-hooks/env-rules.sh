@@ -76,6 +76,7 @@ STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
 STEP_LITERAL = "git 的選項與子指令寫成字面"
 STEP_GREP_ARGS = "git grep 的選項寫成字面；要搜的字串來自變數時寫成 -e \"$X\"，路徑放在 -- 後面"
 STEP_XARGS = "xargs 後面的 git 寫明字面的子指令（不用替換字串）"
+STEP_SHELL_RUNNER = "不經 watch、parallel，直接下 git"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -272,8 +273,18 @@ def analyze_runner(runner, args, state):
                 skips.add(len(args) - len(rest) - 1)
             # 包裝程式後面、git 前面的變數設定（sudo NAME=值、sudo env NAME=值）也算
             variables = VARIABLES + [name for name in map(assigned, args[:i]) if name]
-            git_rules(args[i + 1:], variables, runner or "這條指令", args[:i])
+            via, between = nearest_runner(runner, args[:i])
+            git_rules(args[i + 1:], variables, via or "這條指令", between)
 
+
+def nearest_runner(runner, before):
+    """(執行 git 的包裝程式, 它和 git 之間的字)：git 前面最近的包裝程式（sudo xargs git … 是 xargs，#436）；前面的字裡沒有
+    包裝程式，就是 runner 與前面全部的字。"""
+    for k in range(len(before) - 1, -1, -1):
+        word = before[k]
+        if word.static and os.path.basename(word.text) in RUNNERS:
+            return os.path.basename(word.text), before[k + 1:]
+    return runner, before
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -505,6 +516,9 @@ def git_rules(args, variables, runner, between=()):
     包裝程式（直接下的是 None）；between 是包裝程式和 git 之間的字（xargs 的選項）。"""
     who = "git" if runner is None else f"{runner} 執行的 git"
     options, subcommand, rest, unclear = git_words(args)
+    if runner in ("watch", "parallel"):
+        block(who, f"{runner} 會把組好的指令交給 shell 再解讀一次，hook 看到的字不是實際執行的字（Q8）",
+              (STEP_SHELL_RUNNER,) + STEP_SEARCH)
     if runner == "xargs":
         xargs_rules(who, args, between, subcommand, rest)
     if unclear is not None:
