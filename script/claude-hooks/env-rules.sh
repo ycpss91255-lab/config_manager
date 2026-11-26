@@ -69,7 +69,7 @@ STEP_VERIFY = ("不碰 cm_verify_* 驗證環境（維護者人工驗收用的容
 STEP_TOKEN = "token 檔不讀、不搜尋、不複製（AGENTS.md「工作階段的規則」）；需要 token 的步驟請維護者自己執行"
 STEP_READ = ("要讀單一檔案就用 Read（Read 有 Read(//**/*token*.md) 的 deny 規則，照 symlink 解析到的檔比對）；"
              "Grep 工具、Bash 的 grep -r、rg 這類遞迴搜尋，與 git grep 會讀沒追蹤檔或 repo 外檔的寫法一律擋（#412、#426）")
-STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untracked，前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定，"
+STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untracked、-O，前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定，"
                  "只搜 repo 追蹤的檔")
 STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
 STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
