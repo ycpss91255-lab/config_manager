@@ -657,6 +657,14 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "xargs 的選項或替換字串來自 shell 展開時，經它執行的 git 被擋：xargs \$OPTS git add、xargs -I \"\$R\" git log -1（#436）" {
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" \
+    'xargs $OPTS git add' \
+    'xargs -I "$R" git log -1'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test "經 xargs 執行、子指令是字面而且不是替換字串的 git 放行：xargs git add、xargs -I{} git log -1 {}、xargs -I{} git -C {} status（#436）" {
   run expect_bash allow "${WORK}" \
     'xargs git add' \
