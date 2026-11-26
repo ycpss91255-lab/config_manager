@@ -174,6 +174,31 @@ def entry_script(word, state):
 GREPS = {"grep", "egrep", "fgrep"}
 RUNNERS = {"sudo", "doas", "xargs", "watch", "parallel", "caffeinate", "stdbuf", "unbuffer"}
 
+# 這一段指令前面與 env 後面的變數設定名稱，給 git grep 的 GIT_CONFIG… 規則用（#426）。shell-parse.sh 的 command_words 只回傳
+# 前面的，env 後面的由 strip_wrappers 拿掉；git switch 的規則照舊只看前面的。
+VARIABLES = []
+
+_shared_strip_wrappers = strip_wrappers
+_shared_command_words = command_words
+
+
+def assigned(word):
+    """NAME=值 設定的變數名稱（值來自 shell 展開也算）；不是變數設定就回 None。"""
+    return word.prefix.split("=", 1)[0].rstrip("+") if ASSIGN.match(word.prefix) else None
+
+
+def strip_wrappers(words):  # 取代 shell-parse.sh 的同名函式：拿掉的包裝裡的變數設定（env NAME=值）另記進 VARIABLES
+    rest = _shared_strip_wrappers(words)
+    VARIABLES.extend(name for name in map(assigned, words[:len(words) - len(rest)]) if name)
+    return rest
+
+
+def command_words(command):  # 取代 shell-parse.sh 的同名函式：每一段指令重記 VARIABLES，前面的變數設定也記進去
+    del VARIABLES[:]
+    assignments, words = _shared_command_words(command)
+    VARIABLES[:0] = assignments
+    return assignments, words
+
 
 def dispatch(program, args, state, assignments, words):
     script = entry_script(words[0], state)
@@ -190,7 +215,7 @@ def dispatch(program, args, state, assignments, words):
                 ask(f"{program} {sourced}")
     elif program == "git":
         analyze_git(args, state, assignments)
-        git_grep_rules(args, None)
+        git_grep_rules(args, VARIABLES, None)
     elif program in GREPS:
         analyze_grep(program, args)
     elif program == "rg":
@@ -239,7 +264,9 @@ def analyze_runner(runner, args, state):
             _, subcommand, rest = git_parts(args[i + 1:])
             if subcommand == "grep":
                 skips.add(len(args) - len(rest) - 1)
-            git_grep_rules(args[i + 1:], runner or "這條指令")
+            # 包裝程式後面、git 前面的變數設定（sudo NAME=值、sudo env NAME=值）也算
+            variables = VARIABLES + [name for name in map(assigned, args[:i]) if name]
+            git_grep_rules(args[i + 1:], variables, runner or "這條指令")
 
 
 # ── 第 1 點：just 的 recipe ──────────────────────────────────────────────
@@ -407,9 +434,14 @@ def git_grep_options(args):
     return found
 
 
-def git_grep_rules(args, runner):
-    """args 是 git 後面的字；runner 是執行它的包裝程式（直接下的是 None）。"""
-    _, subcommand, rest = git_parts(args)
+GIT_GREP_CONFIG = ("會改這次搜尋的 git 設定（例如 grep.fallbackToNoIndex 讓 repo 外的 git grep 改用 --no-index）；hook 不讀 git "
+                   "設定（Q1），判斷不了實際搜尋的範圍")
+
+
+def git_grep_rules(args, variables, runner):
+    """args 是 git 後面的字；variables 是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的包裝程式（直接下的
+    是 None）。"""
+    options, subcommand, rest = git_parts(args)
     if subcommand is None:  # 全域選項或子指令來自 shell 展開：rest 從那個字開始
         if any(w.static and w.text == "grep" for w in rest) or git_grep_options(rest):
             block("git" if runner is None else f"{runner} 執行的 git", "git 的選項或子指令來自 shell 展開，後面又有 grep 或 "
@@ -422,6 +454,12 @@ def git_grep_rules(args, runner):
     if runner in ("xargs", "parallel"):
         block(who, f"{runner} 會把讀到的字接在指令後面當參數，參數可能來自標準輸入，hook 看不到會不會加上 --no-index、"
               "--untracked（Q8）", (STEP_RUNNER,) + STEP_SEARCH)
+    for name, _ in options:
+        if name in ("-c", "--config-env"):
+            block(f"{who} 前面的 git {name}", GIT_GREP_CONFIG, STEP_SEARCH)
+    for name in variables:
+        if name.startswith("GIT_CONFIG"):
+            block(f"{who} 前面的 {name}=", GIT_GREP_CONFIG, STEP_SEARCH)
     for text, flag in git_grep_options(rest):
         alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
         block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", STEP_SEARCH)
