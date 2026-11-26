@@ -688,6 +688,15 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "包裝程式後面再經 watch、parallel、xargs 執行的 git 照 git 前面最近的那一個判斷：sudo watch git status、sudo xargs git、sudo xargs git grep -n x 被擋（#436）" {
+  run expect_bash_step "${STEP_SHELL_RUNNER}" "${WORK}" 'sudo watch git status' 'sudo parallel git status ::: a'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" 'sudo xargs git'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_RUNNER}" "${WORK}" 'sudo xargs git grep -n x'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
