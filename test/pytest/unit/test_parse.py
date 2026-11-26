@@ -1071,3 +1071,67 @@ def test_other_formats_that_parse_lists_the_candidates_without_yaml_when_json_pa
     }
 
     assert {key: core_parse.other_formats_that_parse(*key) for key in cases} == cases
+
+
+# ── #402：寫法不合法的數字、日曆上不存在的日期 ─────────────────────────────────
+# #334 的 spike 量到的 9 個字樣：ruamel 把它們認成整數、浮點或時間戳，轉換時才失敗，
+# 拋出裸 IndexError／ValueError，沒有行號。讀取流程照 issue 量的寫法：parse 之後取值。
+
+_UNREADABLE_SCALARS = pytest.mark.parametrize(
+    "written",
+    [
+        "0b_",  # 二進位、十六進位、八進位只有前綴、沒有數字
+        "0x_",
+        "0o_",
+        "._",  # 只有小數點、沒有數字
+        "2001-02-30",  # 2 月沒有 30 日
+        "0000-01-01",  # 沒有 0 年
+        "2001-13-01T00:00:00",  # 沒有 13 月
+        "2001-12-14 24:00:00",  # 時是 0～23
+        "2001-12-14 23:59:60",  # 秒是 0～59
+    ],
+)
+
+
+def _read_error(text: str, fmt: str) -> SyntaxParse:
+    with pytest.raises(SyntaxParse) as caught:
+        values(parse(text, fmt))
+    return caught.value
+
+
+@_UNREADABLE_SCALARS
+def test_a_yaml_value_unreadable_as_a_number_or_date_raises_a_parse_error_at_its_line(written):
+    # 壞掉的值寫在第 2 行：行號要指到它，不是第 1 行，也不是沒有。
+    broken_line = 2
+    error = _read_error(f"ok: 1\nv: {written}\n", "yaml")
+
+    assert error.line == broken_line
+
+
+@_UNREADABLE_SCALARS
+def test_a_toml_file_holding_such_a_yaml_value_still_raises_the_toml_parse_error(written):
+    # 宣告成 toml 的檔解析不過時，會試其餘格式當候選（F2）；試 yaml 時同一個值也不能拋裸例外。
+    error = _read_error(f"v: {written}\n", "toml")
+
+    assert error.message.startswith("toml 語法錯誤，解析不下去（第 1 行）")
+
+
+@pytest.mark.parametrize(
+    ("written", "expected"),
+    [
+        # 上面 9 個字樣各一個合法的同類寫法；期望值照寫法本身算（0b101 是 5、0x1f 是 31…）。
+        ("0b101", 5),
+        ("0x1f", 31),
+        ("0o17", 15),
+        (".5", 0.5),
+        ("2001-02-28", date(2001, 2, 28)),
+        ("0001-01-01", date(1, 1, 1)),
+        ("2001-12-01T00:00:00", datetime(2001, 12, 1)),
+        ("2001-12-14 23:00:00", datetime(2001, 12, 14, 23)),
+        ("2001-12-14 23:59:59", datetime(2001, 12, 14, 23, 59, 59)),
+    ],
+)
+def test_valid_yaml_numbers_and_dates_of_the_same_kinds_still_read_as_written(written, expected):
+    read = values(parse(f"v: {written}\n", "yaml"))["v"]
+
+    assert _typed(read) == _typed(expected)
