@@ -6,7 +6,8 @@
 
 解析器由 `format` 欄位決定，**不由副檔名推斷**——`.yml`、`.param` 等變體不可靠（#8）。
 yaml→ruamel.yaml、toml→tomlkit 用成熟的 lossless round-trip 函式庫（ADR-00000029），
-document 即其 round-trip 物件。**json 與 ini 沒有保位元組的編輯器**（json 標準庫正規化；
+document 即其 round-trip 物件；ruamel 重新寫出時有些寫法不照原文，所以 yaml 沒被改過時
+dump 回原文（#400，見 `_dump_yaml`）。**json 與 ini 沒有保位元組的編輯器**（json 標準庫正規化；
 configobj 補尾換行、去引號、壓 CRLF、吃尾隨空白，#217），故兩者**存原文**達到逐位元組往返，
 只拿標準庫／configobj 驗語法與取值（`values()`）。改動一個值走 `set_value`（#17）：yaml／toml
 直接改 round-trip 物件；json 與 ini 都原地文字替換——只換被改的那個值的原文（#17 的 D2、F9）。
@@ -62,7 +63,8 @@ class Parsed:
 
     `yaml_text` 是 parse 時的 yaml 原文：ruamel 把 `null` 與空白都讀成 None、寫回一律空白，
     `notes: null` 會變成 `notes:`（F9）。dump 時拿原文對出哪些空值原本寫成 `null`，照原寫法寫回
-    （見 `_yaml_nulls`）。非 yaml 為空字串。
+    （見 `_yaml_nulls`）；文件沒被改過時，dump 直接回這份原文（見 `_dump_yaml`，#400）。非 yaml 為
+    空字串。
     """
 
     fmt: str
@@ -215,6 +217,21 @@ def _parse_yaml(text: str) -> object:
 
 
 def _dump_yaml(document: object, indent: tuple[int, int] | None = None, text: str = "") -> str:
+    """寫出 yaml；文件沒被改過時回 parse 時的原文（T6：未改動任何值時逐位元組相同）。
+
+    ruamel 從文件重新寫出時，有些寫法不照原文（#400 量到：浮點的底線 `1_000.5` 寫成
+    `01000.5`；開頭的 `---` 不見、流式對照表 `{ x: 1 }` 裡的空白與 `<< :` 被改、註解換位置）。
+    所以照常寫出之後，再把原文重新讀一份、用同一套設定寫出：兩份一字不差，就是文件沒被改過
+    （或改了也等於沒改），回原文。不一樣就是有改，照 ruamel 寫出的——改了值之後這些寫法怎麼
+    寫回，不在 #400 的範圍。
+    """
+    written = _write_yaml(document, indent, text)
+    if written == _write_yaml(_parse_yaml(text), indent, text):
+        return text
+    return written
+
+
+def _write_yaml(document: object, indent: tuple[int, int] | None, text: str) -> str:
     engine = _yaml(indent)
     # 只換這一個引擎的 Representer（core/locate 等處各自建的 YAML() 不受影響）。
     engine.Representer = _NullKeepingRepresenter
