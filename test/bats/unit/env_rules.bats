@@ -729,6 +729,13 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "程式名稱來自 shell 展開時，被觸發的 git grep 規則的下一步也一起印：\"\$GIT\" grep -n \"\$P\" 有要搜的字串來自變數時寫成 -e、\"\$GIT\" grep -Ocat x 有用 git grep -l 列出檔名（#436）" {
+  run expect_bash_step "${STEP_VAR_PATTERN}" "${WORK}" '"$GIT" grep -n "$P"'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_PAGER}" "${WORK}" '"$GIT" grep -Ocat x'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
