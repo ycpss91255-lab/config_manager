@@ -1105,3 +1105,11 @@ def test_a_yaml_value_unreadable_as_a_number_or_date_raises_a_parse_error_at_its
     error = _read_error(f"ok: 1\nv: {written}\n", "yaml")
 
     assert error.line == 2
+
+
+@_UNREADABLE_SCALARS
+def test_a_toml_file_holding_such_a_yaml_value_still_raises_the_toml_parse_error(written):
+    # 宣告成 toml 的檔解析不過時，會試其餘格式當候選（F2）；試 yaml 時同一個值也不能拋裸例外。
+    error = _read_error(f"v: {written}\n", "toml")
+
+    assert error.message.startswith("toml 語法錯誤，解析不下去（第 1 行）")
