@@ -74,6 +74,7 @@ STEP_GIT_GREP = ("跨檔搜尋內容用 git grep：不加 --no-index、--untrack
 STEP_SEARCH = (STEP_READ, STEP_GIT_GREP)  # 遞迴搜尋、Grep 工具與 git grep 被擋時的下一步（#426 調整需求第 2 點）
 STEP_RUNNER = "不經 xargs、parallel，直接下 git grep"
 STEP_LITERAL = "git 的選項與子指令寫成字面"
+STEP_GREP_ARGS = "git grep 的選項寫成字面；要搜的字串來自變數時寫成 -e \"$X\"，路徑放在 -- 後面"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -412,30 +413,56 @@ def git_grep_flag(text):
     return None
 
 
-def git_grep_options(args):
-    """git grep 的參數裡寫成選項的 --no-index、--untracked（含縮寫）：[(那個字, 完整的選項名)]。-e、-f 的值與 -- 之後的字
-    不算；來自 shell 展開的字看展開之前的字面部分。"""
+def git_grep_findings(args):
+    """git grep 的參數（-- 之前）裡 hook 要擋的字：[(種類, 補充, 那個字)]（#426、#436）。種類是
+      "flag"    寫成選項的 --no-index、--untracked（含縮寫），補充是完整的選項名；來自 shell 展開的字看展開前的字面部分；
+      "split"   會拆成好幾個字的字（Word.splits），-e、-f 的值也算；
+      "opaque"  不會拆的展開字，展開前的字面部分看不出它是不是選項（封閉條件，見下面）。
+    不會拆的展開字放行的條件（#436 調整需求第 1 點）：-e、-f 的值；字面部分不是空的、不以 - 開頭；字面部分以 -- 開頭而且含
+    =（看 = 前面的名稱）；字面部分是 - 開頭的短選項連寫，在字面部分裡就碰到要值的字母（e、f、A、B、C、m），看那個字母前面的
+    部分。其他的（字面部分是空的、-n"$X"、--un"$X" 這類還沒寫完的選項）都擋。"""
     found = []
     i = 0
     while i < len(args):
         word = args[i]
         text = word.text if word.static else word.prefix
+        if word.splits:
+            found.append(("split", None, word))
         if word.static and text == "--":
             break
         if text.startswith("--"):
-            flag = git_grep_flag(text)
+            name, equals, _ = text.partition("=")
+            flag = git_grep_flag(name)
             if flag is not None:
-                found.append((text, flag))
-        elif text.startswith("-") and len(text) > 1:
+                found.append(("flag", flag, word))
+            if not word.static and not equals and not word.splits:
+                found.append(("opaque", None, word))
+        elif text.startswith("-") and (len(text) > 1 or not word.static):
+            value = False  # 在字面部分裡碰到要值的字母
             for j, option in enumerate(text[1:]):
                 if option in GIT_GREP_VALUE_SHORT:
-                    if word.static and not text[j + 2:]:
-                        i += 1  # 值是下一個字
+                    if word.static and not text[j + 2:] and i + 1 < len(args):
+                        i += 1  # 值是下一個字：會拆成好幾個字才擋
+                        if args[i].splits:
+                            found.append(("split", None, args[i]))
+                    value = True
                     break
                 if option in GIT_GREP_ATTACHED_SHORT:
+                    value = True
                     break
+            if not word.static and not value and not word.splits:
+                found.append(("opaque", None, word))
+        elif not word.static and not text and not word.splits:
+            found.append(("opaque", None, word))
         i += 1
     return found
+
+
+def shown_word(word):
+    """訊息裡怎麼寫這個字：字面的照寫；有展開的寫字面部分加「…」與展開的種類（大括號展開記成大括號展開）。"""
+    if word.static:
+        return f"{word.text}（大括號展開）" if word.splits else word.text
+    return f"{word.prefix}…（{word.dynamic}）"
 
 
 GIT_GREP_CONFIG = ("會改這次搜尋的 git 設定（例如 grep.fallbackToNoIndex 讓 repo 外的 git grep 改用 --no-index）；hook 不讀 git "
@@ -447,26 +474,42 @@ def git_grep_rules(args, variables, runner):
     是 None）。"""
     options, subcommand, rest = git_parts(args)
     if subcommand is None:  # 全域選項或子指令來自 shell 展開：rest 從那個字開始
-        if any(w.static and w.text == "grep" for w in rest) or git_grep_options(rest):
+        if any(w.static and w.text == "grep" for w in rest) or any(kind == "flag" for kind, _, _ in git_grep_findings(rest)):
             block("git" if runner is None else f"{runner} 執行的 git", "git 的選項或子指令來自 shell 展開，後面又有 grep 或 "
                   "--no-index、--untracked，判斷不了會不會是讀沒追蹤檔或 repo 外檔的 git grep（Q8）",
                   (STEP_LITERAL,) + STEP_SEARCH)
         return
     if subcommand != "grep":
         return
-    who = "git grep" if runner is None else f"{runner} 執行的 git grep"
+    git_grep_checks("git grep" if runner is None else f"{runner} 執行的 git grep", options, rest, variables, runner, ())
+
+
+GIT_GREP_SPLIT = ("展開後會拆成好幾個字（沒加雙引號的變數、指令替換、算術展開，\"$@\"、萬用字元、大括號展開），其中一個可能就是 "
+                  "--untracked 這類選項，hook 看不到（Q8）")
+GIT_GREP_OPAQUE = "來自 shell 展開，展開前的字面部分看不出它是不是選項，展開後可能就是 --untracked 這類選項（Q8）"
+
+
+def git_grep_checks(who, options, rest, variables, runner, lead):
+    """git grep 的規則（#426、#436）。who 是訊息裡的位置；options 是 grep 前面的全域選項；rest 是 grep 後面的字；variables
+    是這一段指令前面、env 與包裝程式後面的變數設定名稱；runner 是執行它的包裝程式（直接下的是 None）；lead 是每一句下一步前面
+    另加的句子。"""
     if runner in ("xargs", "parallel"):
         block(who, f"{runner} 會把讀到的字接在指令後面當參數，參數可能來自標準輸入，hook 看不到會不會加上 --no-index、"
-              "--untracked（Q8）", (STEP_RUNNER,) + STEP_SEARCH)
+              "--untracked（Q8）", lead + (STEP_RUNNER,) + STEP_SEARCH)
     for name, _ in options:
         if name in ("-c", "--config-env"):
-            block(f"{who} 前面的 git {name}", GIT_GREP_CONFIG, STEP_SEARCH)
+            block(f"{who} 前面的 git {name}", GIT_GREP_CONFIG, lead + STEP_SEARCH)
     for name in variables:
         if name.startswith("GIT_CONFIG"):
-            block(f"{who} 前面的 {name}=", GIT_GREP_CONFIG, STEP_SEARCH)
-    for text, flag in git_grep_options(rest):
-        alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
-        block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", STEP_SEARCH)
+            block(f"{who} 前面的 {name}=", GIT_GREP_CONFIG, lead + STEP_SEARCH)
+    for kind, flag, word in git_grep_findings(rest):
+        if kind == "flag":
+            text = word.text if word.static else word.prefix
+            alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
+            block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", lead + STEP_SEARCH)
+        else:
+            block(f"{who} 的參數 {shown_word(word)}", GIT_GREP_SPLIT if kind == "split" else GIT_GREP_OPAQUE,
+                  lead + (STEP_GREP_ARGS,) + STEP_SEARCH)
 
 
 def file_rules(tool, tool_input):
