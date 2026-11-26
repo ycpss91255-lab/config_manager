@@ -1071,3 +1071,37 @@ def test_other_formats_that_parse_lists_the_candidates_without_yaml_when_json_pa
     }
 
     assert {key: core_parse.other_formats_that_parse(*key) for key in cases} == cases
+
+
+# ── #402：寫法不合法的數字、日曆上不存在的日期 ─────────────────────────────────
+# #334 的 spike 量到的 9 個字樣：ruamel 把它們認成整數、浮點或時間戳，轉換時才失敗，
+# 拋出裸 IndexError／ValueError，沒有行號。讀取流程照 issue 量的寫法：parse 之後取值。
+
+_UNREADABLE_SCALARS = pytest.mark.parametrize(
+    "written",
+    [
+        "0b_",  # 二進位、十六進位、八進位只有前綴、沒有數字
+        "0x_",
+        "0o_",
+        "._",  # 只有小數點、沒有數字
+        "2001-02-30",  # 2 月沒有 30 日
+        "0000-01-01",  # 沒有 0 年
+        "2001-13-01T00:00:00",  # 沒有 13 月
+        "2001-12-14 24:00:00",  # 時是 0～23
+        "2001-12-14 23:59:60",  # 秒是 0～59
+    ],
+)
+
+
+def _read_error(text: str, fmt: str) -> SyntaxParse:
+    with pytest.raises(SyntaxParse) as caught:
+        values(parse(text, fmt))
+    return caught.value
+
+
+@_UNREADABLE_SCALARS
+def test_a_yaml_value_unreadable_as_a_number_or_date_raises_a_parse_error_at_its_line(written):
+    # 壞掉的值寫在第 2 行：行號要指到它，不是第 1 行，也不是沒有。
+    error = _read_error(f"ok: 1\nv: {written}\n", "yaml")
+
+    assert error.line == 2
