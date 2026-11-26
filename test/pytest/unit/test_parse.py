@@ -521,8 +521,8 @@ def test_changing_another_yaml_value_keeps_untouched_timestamps_as_written(path,
 
 
 def test_yaml_timestamps_read_back_the_same_values_and_types_after_another_value_changes():
-    # 只改 n，寫出後再讀：時間戳、日期仍是原本的時刻、時區位移與種類（期望值照 YAML timestamp 的寫法：
-    # `.10` 是 0.1 秒、`-5` 是 UTC-5、`Z` 是 UTC、沒寫時區的是不帶時區的時刻）。
+    # 只改 n，寫出後再讀：時間戳、日期仍是原本的時刻、時區位移與種類（期望值照 YAML timestamp
+    # 的寫法：`.10` 是 0.1 秒、`-5` 是 UTC-5、`Z` 是 UTC、沒寫時區的是不帶時區的時刻）。
     parsed = parse(_TIMESTAMPS_YAML, "yaml")
     set_value(parsed, "n", 2)
 
