@@ -16,6 +16,7 @@ setup() {
   STEP_READ="要讀單一檔案就用 Read"
   STEP_GIT_GREP="跨檔搜尋內容用 git grep"
   STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
+  STEP_LITERAL="git 的選項與子指令寫成字面"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -407,6 +408,14 @@ checkouts() {
     "xargs git grep -n x" \
     "xargs git grep --no-index x" \
     "parallel git grep -n x ::: src"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "git 的全域選項或子指令來自 shell 展開的 git \$OPTS grep x、git \$SUB --no-index x 被擋，下一步有 git 的選項與子指令寫成字面（#426）" {
+  run expect_bash_step "${STEP_LITERAL}" "${WORK}" \
+    'git $OPTS grep x' \
+    'git $SUB --no-index x'
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
