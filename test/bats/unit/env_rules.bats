@@ -18,6 +18,13 @@ setup() {
   STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
   STEP_LITERAL="git 的選項與子指令寫成字面"
   STEP_CONFIG="前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定"
+  STEP_GREP_ARGS="git grep 的選項寫成字面"
+  STEP_VAR_PATTERN="要搜的字串來自變數時寫成 -e"
+  STEP_XARGS="xargs 後面的 git 寫明字面的子指令"
+  STEP_SHELL_RUNNER="不經 watch、parallel，直接下 git"
+  STEP_PROGRAM="程式名稱寫成字面"
+  STEP_PAGER="用 git grep -l 列出檔名，再用 Read 讀"
+  STEP_NO_PAGER="跨檔搜尋內容用 git grep：不加 --no-index、--untracked、-O"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -134,6 +141,18 @@ blocked_searches() {
   done
   call Grep '{"pattern": "x"}'
   cp "${WORK}/err.txt" "${WORK}/search-4.txt"
+}
+
+# blocked_unclear：#436 新擋的六種寫法各呼叫一次（參數來自展開、子指令來自展開、xargs 看不出子指令、watch、程式名稱來自展開、
+# -O），標準錯誤依序存成 unclear-1.txt～unclear-6.txt。
+blocked_unclear() {
+  local i=0 command
+  for command in 'git grep -n "$PATTERN"' 'git $X' 'xargs git' 'watch git status' '"$GIT" grep --no-index x' \
+    'git grep -O x'; do
+    i=$((i + 1))
+    bash_call "${command}"
+    cp "${WORK}/err.txt" "${WORK}/unclear-${i}.txt"
+  done
 }
 
 # commit <repo>：在 <repo> 留一個空的 commit（只有規格自己呼叫 git；hook 不呼叫）。
@@ -465,7 +484,6 @@ checkouts() {
     "git grep --null -l x" \
     "git grep --name-only x" \
     "git grep --no-untracked x" \
-    'git $OPTS log -n 1' \
     "git -c color.ui=never log -n 1" \
     "GIT_CONFIG_COUNT=0 git log -n 1"
 
@@ -529,6 +547,256 @@ checkouts() {
 
 @test "git grep 改搜不含副檔名的片段 git grep -n 'token\\*' 放行（#426）" {
   [ "$(bash_verdict "git grep -n 'token\\*'")" = allow ]
+}
+
+# ── 第 4 點：看不出內容的 git 寫法與 git grep -O（#436） ─────────────────
+
+@test "git grep 的參數來自 shell 展開（會拆成好幾個字的，與展開前的字面部分看不出是不是選項的）被擋，下一步有 git grep 的選項寫成字面（#436）" {
+  run expect_bash_step "${STEP_GREP_ARGS}" "${WORK}" \
+    'git grep $OPTS x' \
+    'git grep "$@"' \
+    'git grep -n "$PATTERN"' \
+    'git grep -n x "$DIR"' \
+    'git grep -n"$X" x' \
+    'git grep -n -e $P' \
+    'git grep -n -e "$@"' \
+    'git grep -n x src/$DIR' \
+    'git grep -n foo$X' \
+    'git grep -n x src/*.py' \
+    'git grep -n x {--untracked,.}' \
+    'git grep -n x src/{a,b}.py' \
+    'git grep -C "$N" x' \
+    'sudo git grep $OPTS x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "會拆成好幾個字的其他展開當 -e 的值也被擋：沒加雙引號的指令替換、反引號、算術展開，雙引號裡的 \"\${A[@]}\" 這類陣列與 zsh 的寫法，萬用字元 ? 與 [，{1..3}（#436）" {
+  run expect_bash_step "${STEP_GREP_ARGS}" "${WORK}" \
+    'git grep -e $(cat p)' \
+    'git grep -e `cat p`' \
+    'git grep -e $((1 + 1))' \
+    'git grep -e "${A[@]}"' \
+    'git grep -e "${@}"' \
+    'git grep -e "${A[@]:1}"' \
+    'git grep -e "${!A[@]}"' \
+    'git grep -e "${(@)A}"' \
+    'git grep -e "$A[@]"' \
+    'git grep -e x?' \
+    'git grep -e [ab]' \
+    'git grep -e {1..3}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "不會拆成好幾個字的寫法當 -e、-f 的值放行：\$'…'、~使用者、程序替換、雙引號裡的 \"\$*\" 與 \"\${A}\"、加了引號或跳脫的大括號、沒有 , 或 .. 的大括號（#436）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n -e \$'\\t'" \
+    'git grep -n -e ~bob' \
+    'git grep -n -f <(printf x)' \
+    'git grep -n -e "$*"' \
+    'git grep -n -e "${A}"' \
+    "git grep -n -e '{a,b}'" \
+    'git grep -n -e "{a,b}"' \
+    'git grep -n -e \{a,b\}' \
+    'git grep -n -e {a}' \
+    'git grep -n -e {}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "確定不會變成選項、也不會拆字的展開放行：-e、-f 的值，-- 之後的字，字面部分不以 - 開頭，--名稱=\"\$值\"，-C、-m 連寫的值，git -C \"\$DIR\"（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git grep -n -e "$PATTERN"' \
+    'git grep -n -e"$PATTERN"' \
+    "git grep -n -e \$'\\t'" \
+    'git grep -n -f "$FILE"' \
+    'git grep -n x -- "$DIR"' \
+    'git grep -n x -- $DIR' \
+    'git grep -n x -- src/*.py' \
+    'git grep -n x src/"$DIR"' \
+    'git grep --max-depth="$N" x' \
+    'git grep -C"$N" x' \
+    'git grep -m"$N" x' \
+    'git -C "$DIR" grep -n x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "git 的全域選項或子指令來自 shell 展開（不管後面有沒有 grep），或這一段有會拆成好幾個字的字被擋，下一步有 git 的選項與子指令寫成字面（#436）" {
+  run expect_bash_step "${STEP_LITERAL}" "${WORK}" \
+    'git $X' \
+    'git "$@"' \
+    'git $OPTS log -n 1' \
+    'A=(grep --untracked x); git $A' \
+    "bash -c 'git \$X'" \
+    'git -C $DIR status' \
+    'git --git-dir=$D log -1' \
+    'git {grep,--untracked} x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "不會拆的展開當全域選項的值、子指令是字面而且不是 grep 時放行：git -C \"\$DIR\"、--git-dir=\"\$D\"、git -c \"user.name=\$N\"、git log -n 1 \$REV、git commit -m \"\$MSG\"（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git -C "$DIR" status' \
+    'git -C "$(git rev-parse --show-toplevel)" log -1' \
+    'git --git-dir="$D" log -1' \
+    'git -c "user.name=$N" log -1' \
+    'git -c user.email="$E" commit -m x' \
+    'git log -n 1 $REV' \
+    'git commit -m "$MSG"'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "全域選項寫成 --名稱=\"\$值\" 而子指令是 grep 時照 git grep 的規則判斷：git --git-dir=\"\$D\" grep -n x 放行、git --git-dir=\"\$D\" grep --no-index x 被擋（#436）" {
+  [ "$(bash_verdict 'git --git-dir="$D" grep -n x')" = allow ]
+  [ "$(bash_verdict 'git --git-dir="$D" grep --no-index x')" = deny ]
+}
+
+@test "經 xargs 執行、看不出子指令的 git 被擋（沒寫、來自展開、是 -I、-J、-i 的替換字串，或 -J 的字在子指令前面），下一步有 xargs 後面的 git 寫明字面的子指令（#436）" {
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" \
+    'xargs git' \
+    "printf 'grep\\n--untracked\\nx\\n' | xargs git" \
+    'xargs git $X' \
+    'xargs -I{} git {} -n x' \
+    'xargs -I% git % --untracked x' \
+    'xargs -J % git % -n x' \
+    'xargs -J % git -C % status' \
+    'xargs -i git {} -n x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "xargs 的選項或替換字串來自 shell 展開時，經它執行的 git 被擋：xargs \$OPTS git add、xargs -I \"\$R\" git log -1（#436）" {
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" \
+    'xargs $OPTS git add' \
+    'xargs -I "$R" git log -1'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "經 xargs 執行、子指令是字面而且不是替換字串的 git 放行：xargs git add、xargs -I{} git log -1 {}、xargs -I{} git -C {} status（#436）" {
+  run expect_bash allow "${WORK}" \
+    'xargs git add' \
+    'xargs -I{} git log -1 {}' \
+    'xargs -I{} git -C {} status' \
+    'xargs -I{} git -C {} pull'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "經 watch、parallel 執行的 git 一律被擋，下一步有不經 watch、parallel，直接下 git（#436）" {
+  run expect_bash_step "${STEP_SHELL_RUNNER}" "${WORK}" \
+    'watch git status' \
+    'watch -x git status' \
+    "watch git '\$SUB' --untracked x" \
+    'parallel git log -1 {} ::: HEAD' \
+    'parallel git ::: grep' \
+    'parallel -j2 git status ::: a' \
+    "parallel git '\$SUB' --untracked x ::: a"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "包裝程式後面再經 watch、parallel、xargs 執行的 git 照 git 前面最近的那一個判斷：sudo watch git status、sudo xargs git、sudo xargs git grep -n x 被擋（#436）" {
+  run expect_bash_step "${STEP_SHELL_RUNNER}" "${WORK}" 'sudo watch git status' 'sudo parallel git status ::: a'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_XARGS}" "${WORK}" 'sudo xargs git'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_RUNNER}" "${WORK}" 'sudo xargs git grep -n x'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開、後面有字面的 grep 而且有 git grep 會擋的寫法被擋，下一步有程式名稱寫成字面（#436）" {
+  run expect_bash_step "${STEP_PROGRAM}" "${WORK}" \
+    '"$GIT" grep --no-index x' \
+    '$G grep --untracked x' \
+    '$G -C .. grep --no-index x' \
+    '"$GIT" -c grep.fallbackToNoIndex=true grep x' \
+    'GIT_CONFIG_COUNT=1 "$GIT" grep x' \
+    '"$GIT" grep -Ocat x' \
+    '"$GIT" grep -n "$P"' \
+    '$SUDO grep -n "$P" file' \
+    '$SUDO grep -n x *.log'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開而沒有 git grep 會擋的寫法時放行：\"\$GIT\" grep -n x、\$SUDO grep -n x README.md、後面沒有 grep 的 \"\$PY\" -m pip install --no-index、\$CC -O2（#436）" {
+  run expect_bash allow "${WORK}" \
+    '"$GIT" grep -n x' \
+    '"$GIT" grep -n -e "$P"' \
+    '$SUDO grep -n x README.md' \
+    '"$PY" -m pip install --no-index -r req.txt' \
+    '$CC -O2 a.c'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開的 \"\$GIT\" grep -r x 照 #412 的遞迴搜尋規則照舊被擋（#436）" {
+  run expect_bash_step "${STEP_READ}" "${WORK}" '"$GIT" grep -r x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "程式名稱來自 shell 展開時，被觸發的 git grep 規則的下一步也一起印：\"\$GIT\" grep -n \"\$P\" 有要搜的字串來自變數時寫成 -e、\"\$GIT\" grep -Ocat x 有用 git grep -l 列出檔名（#436）" {
+  run expect_bash_step "${STEP_VAR_PATTERN}" "${WORK}" '"$GIT" grep -n "$P"'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+  run expect_bash_step "${STEP_PAGER}" "${WORK}" '"$GIT" grep -Ocat x'
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "包裝程式後面的程式名稱來自 shell 展開、再後面有字面的 grep 時照同樣的規則：sudo \"\$GIT\" grep --no-index x、find -exec \"\$GIT\" grep -Ocat x 被擋，下一步有程式名稱寫成字面（#436）" {
+  run expect_bash_step "${STEP_PROGRAM}" "${WORK}" \
+    'sudo "$GIT" grep --no-index x' \
+    'doas "$GIT" grep -n "$P"' \
+    'find . -exec "$GIT" grep -Ocat x {} +'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "git grep 的 -O、--open-files-in-pager 與它至少到 --o 的前綴被擋，下一步有用 git grep -l 列出檔名，再用 Read 讀（#436）" {
+  run expect_bash_step "${STEP_PAGER}" "${WORK}" \
+    'git grep -O x' \
+    'git grep -Ocat x' \
+    'git grep -nO x' \
+    'git grep --open-files-in-pager=cat x' \
+    'git grep --op x' \
+    'git grep --o x' \
+    "git grep -O'cat \"~/x/My Token.md\";:' x" \
+    'sudo git grep -Ovim x' \
+    'find . -exec git grep -O x {} +'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "-O 不是選項時放行：git grep -l x、-e 的值、-- 之後的 -O、--no-open-files-in-pager、--or（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git grep -l x' \
+    'git grep -n -e -O x' \
+    'git grep -n x -- -O' \
+    'git grep --no-open-files-in-pager x' \
+    'git grep --or -e a -e b'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "#436 新擋的寫法被擋時，下一步也有要讀單一檔案就用 Read 與跨檔搜尋內容用 git grep，後者寫明不加 -O；下一步裡沒有日期與工作階段（#436）" {
+  local file steps failed=0
+  blocked_unclear
+
+  for file in "${WORK}"/unclear-[1-6].txt; do
+    steps="$(sed -n '/下一步：/,$p' "${file}")"
+    if ! grep -qF "${STEP_READ}" "${file}" || ! grep -qF "${STEP_NO_PAGER}" "${file}" || [ -z "${steps}" ] ||
+      printf '%s\n' "${steps}" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}|工作階段'; then
+      printf '%s 的下一步少了其中一句，或有日期或工作階段：\n' "${file##*/}"
+      cat "${file}"
+      failed=1
+    fi
+  done
+  [ "${failed}" -eq 0 ]
 }
 
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
