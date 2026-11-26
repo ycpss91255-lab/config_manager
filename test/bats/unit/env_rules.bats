@@ -472,7 +472,6 @@ checkouts() {
     "git grep --null -l x" \
     "git grep --name-only x" \
     "git grep --no-untracked x" \
-    'git $OPTS log -n 1' \
     "git -c color.ui=never log -n 1" \
     "GIT_CONFIG_COUNT=0 git log -n 1"
 
@@ -608,6 +607,33 @@ checkouts() {
     'git grep -C"$N" x' \
     'git grep -m"$N" x' \
     'git -C "$DIR" grep -n x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "git 的全域選項或子指令來自 shell 展開（不管後面有沒有 grep），或這一段有會拆成好幾個字的字被擋，下一步有 git 的選項與子指令寫成字面（#436）" {
+  run expect_bash_step "${STEP_LITERAL}" "${WORK}" \
+    'git $X' \
+    'git "$@"' \
+    'git $OPTS log -n 1' \
+    'A=(grep --untracked x); git $A' \
+    "bash -c 'git \$X'" \
+    'git -C $DIR status' \
+    'git --git-dir=$D log -1' \
+    'git {grep,--untracked} x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "不會拆的展開當全域選項的值、子指令是字面而且不是 grep 時放行：git -C \"\$DIR\"、--git-dir=\"\$D\"、git -c \"user.name=\$N\"、git log -n 1 \$REV、git commit -m \"\$MSG\"（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git -C "$DIR" status' \
+    'git -C "$(git rev-parse --show-toplevel)" log -1' \
+    'git --git-dir="$D" log -1' \
+    'git -c "user.name=$N" log -1' \
+    'git -c user.email="$E" commit -m x' \
+    'git log -n 1 $REV' \
+    'git commit -m "$MSG"'
 
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
