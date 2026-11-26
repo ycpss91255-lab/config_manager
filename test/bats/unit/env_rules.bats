@@ -736,6 +736,15 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "包裝程式後面的程式名稱來自 shell 展開、再後面有字面的 grep 時照同樣的規則：sudo \"\$GIT\" grep --no-index x、find -exec \"\$GIT\" grep -Ocat x 被擋，下一步有程式名稱寫成字面（#436）" {
+  run expect_bash_step "${STEP_PROGRAM}" "${WORK}" \
+    'sudo "$GIT" grep --no-index x' \
+    'doas "$GIT" grep -n "$P"' \
+    'find . -exec "$GIT" grep -Ocat x {} +'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
