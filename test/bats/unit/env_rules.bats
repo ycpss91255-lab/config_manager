@@ -523,6 +523,14 @@ checkouts() {
   [ "${failed}" -eq 0 ]
 }
 
+@test "git grep 要搜的字串是含 token 的 .md 檔名（git grep -n 'token*.md'）時照 token 檔的規則被擋（#426）" {
+  [ "$(bash_verdict "git grep -n 'token*.md'")" = deny ]
+}
+
+@test "git grep 改搜不含副檔名的片段 git grep -n 'token\\*' 放行（#426）" {
+  [ "$(bash_verdict "git grep -n 'token\\*'")" = allow ]
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
