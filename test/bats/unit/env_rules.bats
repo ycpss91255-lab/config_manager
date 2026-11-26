@@ -675,6 +675,19 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "經 watch、parallel 執行的 git 一律被擋，下一步有不經 watch、parallel，直接下 git（#436）" {
+  run expect_bash_step "${STEP_SHELL_RUNNER}" "${WORK}" \
+    'watch git status' \
+    'watch -x git status' \
+    "watch git '\$SUB' --untracked x" \
+    'parallel git log -1 {} ::: HEAD' \
+    'parallel git ::: grep' \
+    'parallel -j2 git status ::: a' \
+    "parallel git '\$SUB' --untracked x ::: a"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
