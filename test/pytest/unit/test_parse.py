@@ -4,7 +4,7 @@
 字串餵進去，不碰磁碟。
 """
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 
 import pytest
 
@@ -90,7 +90,11 @@ def _typed(value):
     if isinstance(value, list):
         return [_typed(item) for item in value]
     kinds = (bool, int, float, datetime, date, str)
-    return next((kind for kind in kinds if isinstance(value, kind)), type(value)), value
+    kind = next((kind for kind in kinds if isinstance(value, kind)), type(value))
+    if kind is datetime:
+        # 帶時區的 datetime 只比時刻：`-05:00` 與 `Z` 的同一刻也相等，時區位移另外比。
+        return kind, value, value.utcoffset()
+    return kind, value
 
 
 _CENTER_BIG = {"x": 1, "y": 2, "r": 10, "label": "center/big"}
@@ -478,6 +482,79 @@ def test_changing_two_json_values_keeps_a_multi_line_array_as_written():
         '"range_m": 12.5', '"range_m": 15.5'
     )
     assert _lines(dump(parsed)) == _lines(expected)
+
+
+# ── #401：改了別的值，沒動過的時間戳照原文寫回 ─────────────────────────────────────
+# #334 的 spike 經實際 API 量到的寫法：帶小數秒的兩種時間戳（小寫 `t`；空白分隔加 `-5`），其中一個在
+# 清單裡。同一份檔另有三種沒被改寫的寫法（`Z`、沒有時區、日期）與一個整數。
+
+_TIMESTAMPS_YAML = (
+    "ts: 2001-12-14t21:59:43.10-05:00\n"
+    "sp: 2001-12-14 21:59:43.10 -5\n"
+    "utc: 2001-12-14T21:59:43Z\n"
+    "naive: 2001-12-14 21:59:43\n"
+    "d: 2001-12-14\n"
+    "n: 1\n"
+    "l: [2001-12-14t21:59:43.10-05:00, 2001-12-14, 1]\n"
+)
+
+# 改了哪一個值：流程 A 只改 n；流程 C 把 ts 改成另一個字串（issue #401 的現象）。
+_TIMESTAMP_EDITS = pytest.mark.parametrize(
+    ("path", "value"),
+    [("n", 2), ("ts", "2001-12-15T00:00:00Z")],
+    ids=["change-n", "change-ts-to-a-string"],
+)
+
+
+def _lines_other_than(text, key):
+    return [line for line in _lines(text) if not line.startswith(f"{key}:")]
+
+
+@_TIMESTAMP_EDITS
+def test_changing_another_yaml_value_keeps_untouched_timestamps_as_written(path, value):
+    # 被改那一行怎麼寫由函式庫決定（T6），其餘每一行照原文——包括 `sp` 與清單 `l` 裡的時間戳。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+
+    set_value(parsed, path, value)
+
+    assert _lines_other_than(dump(parsed), path) == _lines_other_than(_TIMESTAMPS_YAML, path)
+
+
+def test_yaml_timestamps_read_back_the_same_values_and_types_after_another_value_changes():
+    # 只改 n，寫出後再讀：時間戳、日期仍是原本的時刻、時區位移與種類（期望值照 YAML timestamp
+    # 的寫法：`.10` 是 0.1 秒、`-5` 是 UTC-5、`Z` 是 UTC、沒寫時區的是不帶時區的時刻）。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+    set_value(parsed, "n", 2)
+
+    read_back = values(parse(dump(parsed), "yaml"))
+
+    moment = datetime(2001, 12, 14, 21, 59, 43, 100000, tzinfo=timezone(timedelta(hours=-5)))
+    day = date(2001, 12, 14)
+    expected = {
+        "ts": moment,
+        "sp": moment,
+        "utc": datetime(2001, 12, 14, 21, 59, 43, tzinfo=UTC),
+        "naive": datetime(2001, 12, 14, 21, 59, 43),
+        "d": day,
+        "n": 2,
+        "l": [moment, day, 1],
+    }
+    assert _typed(read_back) == _typed(expected)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2001-12-15T00:00:00Z", datetime(2001, 12, 15, tzinfo=UTC)],
+    ids=["to-a-string", "to-another-moment"],
+)
+def test_a_changed_timestamp_is_written_as_the_new_value_not_the_original_spelling(value):
+    # 照原文寫回只給沒動過的時間戳：改成字串（介面送來的樣子）或另一個時刻，讀回的是新值與它的種類。
+    parsed = parse(_TIMESTAMPS_YAML, "yaml")
+    set_value(parsed, "ts", value)
+
+    read_back = values(parse(dump(parsed), "yaml"))["ts"]
+
+    assert _typed(read_back) == _typed(value)
 
 
 # ── F9 的邊界：介面送回整個清單時常見的幾種改法，沒改的部分都逐行不動 ──────────────
