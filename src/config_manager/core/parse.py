@@ -21,8 +21,9 @@ from __future__ import annotations
 import io
 import json
 import re
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, cast
 
 import tomlkit
@@ -223,19 +224,24 @@ def _dump_yaml(document: object, indent: tuple[int, int] | None = None, text: st
     `01000.5`；開頭的 `---` 不見、流式對照表 `{ x: 1 }` 裡的空白與 `<< :` 被改、註解換位置）。
     所以照常寫出之後，再把原文重新讀一份、用同一套設定寫出：兩份一字不差，就是文件沒被改過
     （或改了也等於沒改），回原文。不一樣就是有改，照 ruamel 寫出的——改了值之後這些寫法怎麼
-    寫回，不在 #400 的範圍。
+    寫回，不在 #400 的範圍；只有沒動過的時間戳照原文寫（#401，見 `_yaml_timestamps`）。
     """
-    written = _write_yaml(document, indent, text)
-    if written == _write_yaml(_parse_yaml(text), indent, text):
+    fresh = _parse_yaml(text)
+    written = _write_yaml(document, indent, text, fresh)
+    if written == _write_yaml(fresh, indent, text, fresh):
         return text
     return written
 
 
-def _write_yaml(document: object, indent: tuple[int, int] | None, text: str) -> str:
+def _write_yaml(
+    document: object, indent: tuple[int, int] | None, text: str, fresh: object
+) -> str:
+    """`fresh` 是原文重新讀出的文件：拿來核對時間戳有沒有被改過（`_yaml_timestamps`）。"""
     engine = _yaml(indent)
     # 只換這一個引擎的 Representer（core/locate 等處各自建的 YAML() 不受影響）。
-    engine.Representer = _NullKeepingRepresenter
+    engine.Representer = _SpellingKeepingRepresenter
     engine.representer.nulls = _yaml_nulls(text, document)
+    engine.representer.timestamps = _yaml_timestamps(text, document, fresh)
     buffer = io.StringIO()
     engine.dump(document, buffer)
     return buffer.getvalue()
@@ -281,8 +287,55 @@ def _yaml_nulls(text: str, document: object) -> frozenset[tuple[int, object]]:
     """
     if "null" not in text:  # 多數檔案沒有寫出來的 null：不必再組成一次
         return frozenset()
-    written = _null_positions(_yaml().compose(text))
-    nulls: set[tuple[int, object]] = set()
+    written = {_at(node) for node in _plain_values(_yaml().compose(text)) if node.value == "null"}
+    return frozenset(
+        (id(container), key)
+        for container, key, value in _yaml_items(document)
+        if value is None and _start(container, key) in written
+    )
+
+
+# ── yaml 時間戳的寫法（#401）：沒動過的照原文寫 ──
+
+_TIMESTAMP_TAG = "tag:yaml.org,2002:timestamp"
+# 帶時刻的時間戳（日期之後接 `T`／`t` 或空白，再接時）：多數檔案沒有，不必再組成一次。
+_YAML_DATETIME = re.compile(r"\d{4}-\d\d?-\d\d?(?:[Tt]|[ \t]+)\d")
+
+
+def _yaml_timestamps(text: str, document: object, fresh: object) -> dict[tuple[int, object], str]:
+    """沒動過的時間戳 → 原文的寫法，鍵是 `(id(容器), 鍵或索引)`。
+
+    ruamel 寫時間戳一律用 isoformat、不照原文（#401 量到：`…t21:59:43.10-05:00` 寫成
+    `…T21:59:43.100000-05:00`、`… 21:59:43.10 -5` 寫成 `… 21:59:43.100000-5`）。原文的寫法在組成
+    階段的節點上；`fresh` 是原文重新讀出的文件，同一個起始行列上是原本的值（位置的對法同
+    `_yaml_nulls`）。現在的值和它相同（`_same_moment`）就是沒動過，照原文寫；改過的（介面送來的是
+    字串）、新的元素沒有對得上的原值，照 ruamel 寫。
+    """
+    if _YAML_DATETIME.search(text) is None:
+        return {}
+    written: dict[object, str] = {
+        _at(node): node.value
+        for node in _plain_values(_yaml().compose(text))
+        if node.tag == _TIMESTAMP_TAG
+    }
+    original = {_start(container, key): value for container, key, value in _yaml_items(fresh)}
+    return {
+        (id(container), key): written[position]
+        for container, key, value in _yaml_items(document)
+        if isinstance(value, datetime)
+        and (position := _start(container, key)) in written
+        and _same_moment(value, original.get(position))
+    }
+
+
+def _same_moment(value: datetime, old: object) -> bool:
+    """種類、時刻、時區位移都相同。帶時區的 datetime 用 `==` 只比時刻（`-05:00` 與 `Z` 的同一刻
+    也相等），位移要另外比。"""
+    return isinstance(old, datetime) and _same(value, old) and value.utcoffset() == old.utcoffset()
+
+
+def _yaml_items(document: object) -> Iterator[tuple[Any, Any, object]]:
+    """文件裡每個對照表、清單的每一項 `(容器, 鍵或索引, 值)`。"""
     stack: list[object] = [document]
     seen: set[int] = set()
     while stack:
@@ -293,18 +346,15 @@ def _yaml_nulls(text: str, document: object) -> frozenset[tuple[int, object]]:
         keys = list(container) if isinstance(container, CommentedMap) else range(len(container))
         for key in keys:
             stack.append(container[key])
-            if container[key] is None and _start(container, key) in written:
-                nulls.add((id(container), key))
-    return frozenset(nulls)
+            yield container, key, container[key]
 
 
-def _null_positions(root: Any) -> set[tuple[int, int]]:
-    """compose 出的節點樹裡，原文寫成裸字 `null` 的**值**節點的起始行列。
+def _plain_values(root: Any) -> Iterator[Any]:
+    """compose 出的節點樹裡，沒加引號的**值**純量節點。
 
     只收 mapping 的值與清單元素、不收鍵：寫成空白的值，`lc` 位置指向下一個記號（常是下一個鍵的
     開頭），鍵名剛好叫 `null` 時才不會被誤認成「這個空值寫了 null」。
     """
-    positions: set[tuple[int, int]] = set()
     stack: list[Any] = [root]
     seen: set[int] = set()
     while stack:
@@ -316,9 +366,13 @@ def _null_positions(root: Any) -> set[tuple[int, int]]:
             stack.extend(value for _key, value in node.value)
         elif isinstance(node, SequenceNode):
             stack.extend(node.value)
-        elif node.value == "null" and node.style is None:
-            positions.add((node.start_mark.line, node.start_mark.column))
-    return positions
+        elif node.style is None:
+            yield node
+
+
+def _at(node: Any) -> tuple[int, int]:
+    """節點在原文的起始行列，和 `_start` 讀到的同一種寫法。"""
+    return node.start_mark.line, node.start_mark.column
 
 
 def _start(container: CommentedMap | CommentedSeq, key: Any) -> object:
@@ -334,15 +388,18 @@ def _start(container: CommentedMap | CommentedSeq, key: Any) -> object:
 _MERGE_TAG = "tag:yaml.org,2002:merge"
 
 
-class _NullKeepingRepresenter(RoundTripRepresenter):
-    """把 `_yaml_nulls` 找出的空值寫成 `null`，其餘照 ruamel 原樣。
+class _SpellingKeepingRepresenter(RoundTripRepresenter):
+    """把 `_yaml_nulls` 找出的空值寫成 `null`、`_yaml_timestamps` 找出的時間戳照原文寫，其餘照
+    ruamel 原樣。
 
-    ruamel 的 represent_none 只拿到 None、不知道自己是哪個容器的哪一項，只能一律寫空白；容器這一層
-    才知道。所以讓 ruamel 照常建好節點，再把該寫 `null` 的那幾個值節點改掉——版面邏輯不重寫。
+    ruamel 的 represent_none、represent_datetime 只拿到值、不知道自己是哪個容器的哪一項，只能一律
+    寫空白、一律寫 isoformat；容器這一層才知道。所以讓 ruamel 照常建好節點，再把那幾個值節點的字
+    改掉——版面邏輯不重寫。
     """
 
     # (id(容器), 鍵或索引)；_dump_yaml 每次 dump 前設定，那時容器都在 document 裡活著，id 不會撞。
     nulls: frozenset[tuple[int, object]] = frozenset()
+    timestamps: Mapping[tuple[int, object], str] = {}  # 同上，值是原文的寫法
 
     def represent_mapping(self, tag: Any, mapping: Any, flow_style: Any = None) -> Any:
         node = super().represent_mapping(tag, mapping, flow_style)
@@ -366,6 +423,8 @@ class _NullKeepingRepresenter(RoundTripRepresenter):
         for key, value_node in zip(keys, nodes, strict=True):
             if (id(container), key) in self.nulls and container[key] is None:
                 value_node.value = "null"
+            elif (id(container), key) in self.timestamps:
+                value_node.value = self.timestamps[(id(container), key)]
 
 
 # ── toml：tomlkit 已在 T1 通過逐位元組往返（ADR-00000029）──
