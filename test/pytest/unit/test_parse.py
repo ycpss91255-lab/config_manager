@@ -1113,3 +1113,24 @@ def test_a_toml_file_holding_such_a_yaml_value_still_raises_the_toml_parse_error
     error = _read_error(f"v: {written}\n", "toml")
 
     assert error.message.startswith("toml 語法錯誤，解析不下去（第 1 行）")
+
+
+@pytest.mark.parametrize(
+    ("written", "expected"),
+    [
+        # 上面 9 個字樣各一個合法的同類寫法；期望值照寫法本身算（0b101 是 5、0x1f 是 31…）。
+        ("0b101", 5),
+        ("0x1f", 31),
+        ("0o17", 15),
+        (".5", 0.5),
+        ("2001-02-28", date(2001, 2, 28)),
+        ("0001-01-01", date(1, 1, 1)),
+        ("2001-12-01T00:00:00", datetime(2001, 12, 1)),
+        ("2001-12-14 23:00:00", datetime(2001, 12, 14, 23)),
+        ("2001-12-14 23:59:59", datetime(2001, 12, 14, 23, 59, 59)),
+    ],
+)
+def test_valid_yaml_numbers_and_dates_of_the_same_kinds_still_read_as_written(written, expected):
+    read = values(parse(f"v: {written}\n", "yaml"))["v"]
+
+    assert _typed(read) == _typed(expected)
