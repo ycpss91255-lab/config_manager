@@ -78,6 +78,7 @@ STEP_GREP_ARGS = "git grep 的選項寫成字面；要搜的字串來自變數�
 STEP_XARGS = "xargs 後面的 git 寫明字面的子指令（不用替換字串）"
 STEP_SHELL_RUNNER = "不經 watch、parallel，直接下 git"
 STEP_PROGRAM = "程式名稱寫成字面（例如 git、sudo），不放在變數裡"
+STEP_PAGER = "要看符合的檔，用 git grep -l 列出檔名，再用 Read 讀；不加 -O、--open-files-in-pager"
 STEP_WORKTREE = ("改到 worktree 裡做：從最新的 origin/main 另開 worktree（git worktree add -b <分支> <目錄> origin/main），"
                  "在那裡切分支；要還原檔案就寫 git checkout -- <檔>")
 STEP_DIR = "改到 worktree 裡做，或寫明目錄（git -C <worktree 的目錄> switch …，目錄寫成字面、不放在子 shell 裡 cd）"
@@ -432,7 +433,8 @@ def analyze_find(args, state):
 GIT_GREP_FLAGS = {"--no-index": "會搜目前目錄底下不歸 git 管的檔，在 repo 外執行時就是那個資料夾裡的每個檔",
                   "--untracked": "會連 repo 裡沒追蹤的檔一起搜"}
 GIT_GREP_VALUE_SHORT = "ef"       # -e、-f 的值是要搜的字串、讀字串的檔，不算選項
-GIT_GREP_ATTACHED_SHORT = "ABCmO"  # 連寫時，後面的字是它的值（-O 只收連寫的值）
+GIT_GREP_ATTACHED_SHORT = "ABCm"   # 連寫時，後面的字是它的值
+GIT_GREP_PAGER = "--open-files-in-pager"  # 與 -O：用 pager 開符合的檔；值只收連寫的（#436）
 
 
 def git_grep_flag(text):
@@ -446,10 +448,17 @@ def git_grep_flag(text):
     return None
 
 
+def git_grep_pager(name):
+    """--open-files-in-pager 與它至少到 --o 的前綴（--o 在 git 上有歧義，照 #426 對 --n 的做法也算）；--x=值 只看 = 前面。"""
+    return len(name) >= 3 and GIT_GREP_PAGER.startswith(name)
+
+
 def git_grep_findings(args):
     """git grep 的參數（-- 之前）裡 hook 要擋的字：[(種類, 補充, 那個字)]（#426、#436）。種類是
       "flag"    寫成選項的 --no-index、--untracked（含縮寫），補充是完整的選項名；來自 shell 展開的字看展開前的字面部分；
       "split"   會拆成好幾個字的字（Word.splits），-e、-f 的值也算；
+      "pager"   -O（短選項連寫裡的 O，前面沒有吃掉後面字的 e、f、A、B、C、m）、--open-files-in-pager 與它至少到 --o 的
+                前綴，有沒有 =值 都算；
       "opaque"  不會拆的展開字，展開前的字面部分看不出它是不是選項（封閉條件，見下面）。
     不會拆的展開字放行的條件（#436 調整需求第 1 點）：-e、-f 的值；字面部分不是空的、不以 - 開頭；字面部分以 -- 開頭而且含
     =（看 = 前面的名稱）；字面部分是 - 開頭的短選項連寫，在字面部分裡就碰到要值的字母（e、f、A、B、C、m），看那個字母前面的
@@ -468,6 +477,8 @@ def git_grep_findings(args):
             flag = git_grep_flag(name)
             if flag is not None:
                 found.append(("flag", flag, word))
+            if git_grep_pager(name):
+                found.append(("pager", None, word))
             if not word.static and not equals and not word.splits:
                 found.append(("opaque", None, word))
         elif text.startswith("-") and (len(text) > 1 or not word.static):
@@ -481,6 +492,10 @@ def git_grep_findings(args):
                     value = True
                     break
                 if option in GIT_GREP_ATTACHED_SHORT:
+                    value = True
+                    break
+                if option == "O":  # 後面連寫的字是 pager 的程式
+                    found.append(("pager", None, word))
                     value = True
                     break
             if not word.static and not value and not word.splits:
@@ -614,6 +629,8 @@ def xargs_rules(who, args, between, subcommand, rest):
 
 GIT_GREP_SPLIT = ("展開後會拆成好幾個字（沒加雙引號的變數、指令替換、算術展開，\"$@\"、萬用字元、大括號展開），其中一個可能就是 "
                   "--untracked 這類選項，hook 看不到（Q8）")
+GIT_GREP_PAGER_WHY = ("-O、--open-files-in-pager 用 pager 開符合的檔：值（沒寫時是 GIT_PAGER、core.pager、PAGER）經 shell 執行，"
+                      "可以是任何指令，hook 不分析它，也讀不到設定與環境變數（Q1、Q8）")
 GIT_GREP_OPAQUE = "來自 shell 展開，展開前的字面部分看不出它是不是選項，展開後可能就是 --untracked 這類選項（Q8）"
 
 
@@ -631,7 +648,10 @@ def git_grep_checks(who, options, rest, variables, runner, lead):
         if name.startswith("GIT_CONFIG"):
             block(f"{who} 前面的 {name}=", GIT_GREP_CONFIG, lead + STEP_SEARCH)
     for kind, flag, word in git_grep_findings(rest):
-        if kind == "flag":
+        if kind == "pager":
+            text = word.text if word.static else word.prefix
+            block(f"{who} 的 {text}", GIT_GREP_PAGER_WHY, lead + (STEP_PAGER,) + STEP_SEARCH)
+        elif kind == "flag":
             text = word.text if word.static else word.prefix
             alias = " " if text.split("=", 1)[0] == flag else f"（{text} 是它的縮寫）"
             block(f"{who} 的 {text}", f"{flag}{alias}{GIT_GREP_FLAGS[flag]}，可能讀到 token 檔", lead + STEP_SEARCH)
