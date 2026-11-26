@@ -432,6 +432,33 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "不帶這些寫法的 git grep 放行：grep 的計數選項 -c、-e 的值與 -- 之後的字不算，sudo 執行的照同樣的規則（#426）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n x" \
+    "git grep -n x -- '*.py'" \
+    "git -C ../wt grep -n x" \
+    "git grep -c x" \
+    "git grep -n -e --no-index" \
+    "git grep -n x -- --untracked" \
+    "sudo git grep -n x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "-f 的值、連寫的 -ne 的值、不是 --no-index 前綴的 --null 與 --name-only、--no-untracked，與 grep 以外的 git 子指令前面的 -c、GIT_CONFIG 放行（#426）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n -f --untracked" \
+    "git grep -ne --no-index" \
+    "git grep --null -l x" \
+    "git grep --name-only x" \
+    "git grep --no-untracked x" \
+    'git $OPTS log -n 1' \
+    "git -c color.ui=never log -n 1" \
+    "GIT_CONFIG_COUNT=0 git log -n 1"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
