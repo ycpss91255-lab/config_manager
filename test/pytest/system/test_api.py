@@ -6270,6 +6270,45 @@ def test_a_draft_can_replace_a_whole_list_and_keeps_the_rest_byte_for_byte(api, 
     )
 
 
+# ── T9：改了別的值，目標檔裡沒動過的時間戳照原文寫回（#401）──────────────────────────────
+
+# #334 的 spike 在實際 API 上量到的寫法：帶小數秒的兩種時間戳（小寫 `t`；空白分隔加 `-5`），其中一個
+# 在清單裡；另有三種沒被改寫的寫法（`Z`、沒有時區、日期）與一個整數。
+_TIMESTAMPS_YAML = (
+    b"ts: 2001-12-14t21:59:43.10-05:00\n"
+    b"sp: 2001-12-14 21:59:43.10 -5\n"
+    b"utc: 2001-12-14T21:59:43Z\n"
+    b"naive: 2001-12-14 21:59:43\n"
+    b"d: 2001-12-14\n"
+    b"n: 1\n"
+    b"l: [2001-12-14t21:59:43.10-05:00, 2001-12-14, 1]\n"
+)
+
+
+def _lines_other_than(content, key):
+    return [line for line in content.splitlines(keepends=True) if not line.startswith(key + b":")]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [("n", 2), ("ts", "2001-12-15T00:00:00Z")],
+    ids=["change-n", "change-ts-to-a-string"],
+)
+def test_promoting_another_value_keeps_untouched_timestamps_in_the_target_as_written(
+    api, sources_root, path, value
+):
+    # 流程 A 只改 n、流程 C 把 ts 改成字串：存草稿、進版後讀目標檔。被改那一行怎麼寫由函式庫決定
+    # （T6），其餘每一行逐位元組不動——包括 `sp` 與沒有送出的清單 `l` 裡的時間戳。
+    _clear_drafts(api)
+    entry = _onboard(api, sources_root, f"untouched_timestamps_{path}.yaml", _TIMESTAMPS_YAML)
+
+    _promote_value(api, entry["uid"], path, value)
+
+    written = pathlib.Path(entry["target"]).read_bytes()
+    key = path.encode()
+    assert _lines_other_than(written, key) == _lines_other_than(_TIMESTAMPS_YAML, key)
+
+
 # ── F15／F16：送進來的字串值進版後讀回相同；無法無損表示 → 422、草稿與來源不動 ──────────
 
 
