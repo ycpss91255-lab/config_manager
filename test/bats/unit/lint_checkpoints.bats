@@ -186,3 +186,12 @@ stub_gh() {
   run "${LINT}" 1 "${BASE}"
   [ "${status}" -eq 0 ]
 }
+
+@test "issue 內文是 CRLF 換行時，記的主旨在 git 歷史裡找不到仍被擋下（#420）" {
+  # 守門用：去掉 \r 之後第 4 條規則照樣比對，不是遇到 CRLF 就不比。
+  stub_gh $'- [x] 第一條 — feat(x): 這筆 commit 不存在\r\n'
+
+  run "${LINT}" 1 "${BASE}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"這筆 commit 不存在"* ]]
+}
