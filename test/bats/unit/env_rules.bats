@@ -18,6 +18,13 @@ setup() {
   STEP_RUNNER="不經 xargs、parallel，直接下 git grep"
   STEP_LITERAL="git 的選項與子指令寫成字面"
   STEP_CONFIG="前面不加 git -c、--config-env 或 GIT_CONFIG… 的設定"
+  STEP_GREP_ARGS="git grep 的選項寫成字面"
+  STEP_VAR_PATTERN="要搜的字串來自變數時寫成 -e"
+  STEP_XARGS="xargs 後面的 git 寫明字面的子指令"
+  STEP_SHELL_RUNNER="不經 watch、parallel，直接下 git"
+  STEP_PROGRAM="程式名稱寫成字面"
+  STEP_PAGER="用 git grep -l 列出檔名，再用 Read 讀"
+  STEP_NO_PAGER="跨檔搜尋內容用 git grep：不加 --no-index、--untracked、-O"
   STEP_WORKTREE="改到 worktree 裡做"
   STEP_DIR="改到 worktree 裡做，或寫明目錄"
   STEP_VERIFY="不碰 cm_verify_* 驗證環境"
@@ -529,6 +536,46 @@ checkouts() {
 
 @test "git grep 改搜不含副檔名的片段 git grep -n 'token\\*' 放行（#426）" {
   [ "$(bash_verdict "git grep -n 'token\\*'")" = allow ]
+}
+
+# ── 第 4 點：看不出內容的 git 寫法與 git grep -O（#436） ─────────────────
+
+@test "git grep 的參數來自 shell 展開（會拆成好幾個字的，與展開前的字面部分看不出是不是選項的）被擋，下一步有 git grep 的選項寫成字面（#436）" {
+  run expect_bash_step "${STEP_GREP_ARGS}" "${WORK}" \
+    'git grep $OPTS x' \
+    'git grep "$@"' \
+    'git grep -n "$PATTERN"' \
+    'git grep -n x "$DIR"' \
+    'git grep -n"$X" x' \
+    'git grep -n -e $P' \
+    'git grep -n -e "$@"' \
+    'git grep -n x src/$DIR' \
+    'git grep -n foo$X' \
+    'git grep -n x src/*.py' \
+    'git grep -n x {--untracked,.}' \
+    'git grep -n x src/{a,b}.py' \
+    'git grep -C "$N" x' \
+    'sudo git grep $OPTS x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "會拆成好幾個字的其他展開當 -e 的值也被擋：沒加雙引號的指令替換、反引號、算術展開，雙引號裡的 \"\${A[@]}\" 這類陣列與 zsh 的寫法，萬用字元 ? 與 [，{1..3}（#436）" {
+  run expect_bash_step "${STEP_GREP_ARGS}" "${WORK}" \
+    'git grep -e $(cat p)' \
+    'git grep -e `cat p`' \
+    'git grep -e $((1 + 1))' \
+    'git grep -e "${A[@]}"' \
+    'git grep -e "${@}"' \
+    'git grep -e "${A[@]:1}"' \
+    'git grep -e "${!A[@]}"' \
+    'git grep -e "${(@)A}"' \
+    'git grep -e "$A[@]"' \
+    'git grep -e x?' \
+    'git grep -e [ab]' \
+    'git grep -e {1..3}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
