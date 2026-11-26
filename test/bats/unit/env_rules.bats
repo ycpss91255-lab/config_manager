@@ -459,6 +459,14 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "find -exec、sudo 執行的 git grep 照直接下 git grep 的規則：find . -exec git grep -n x {} +、sudo git grep -r x 放行，不再當成 find、sudo 執行的 grep（#426）" {
+  run expect_bash allow "${WORK}" \
+    "find . -exec git grep -n x {} +" \
+    "sudo git grep -r x"
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
