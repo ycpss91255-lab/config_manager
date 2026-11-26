@@ -578,6 +578,40 @@ checkouts() {
   [ "${status}" -eq 0 ] || { echo "${output}"; false; }
 }
 
+@test "不會拆成好幾個字的寫法當 -e、-f 的值放行：\$'…'、~使用者、程序替換、雙引號裡的 \"\$*\" 與 \"\${A}\"、加了引號或跳脫的大括號、沒有 , 或 .. 的大括號（#436）" {
+  run expect_bash allow "${WORK}" \
+    "git grep -n -e \$'\\t'" \
+    'git grep -n -e ~bob' \
+    'git grep -n -f <(printf x)' \
+    'git grep -n -e "$*"' \
+    'git grep -n -e "${A}"' \
+    "git grep -n -e '{a,b}'" \
+    'git grep -n -e "{a,b}"' \
+    'git grep -n -e \{a,b\}' \
+    'git grep -n -e {a}' \
+    'git grep -n -e {}'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
+@test "確定不會變成選項、也不會拆字的展開放行：-e、-f 的值，-- 之後的字，字面部分不以 - 開頭，--名稱=\"\$值\"，-C、-m 連寫的值，git -C \"\$DIR\"（#436）" {
+  run expect_bash allow "${WORK}" \
+    'git grep -n -e "$PATTERN"' \
+    'git grep -n -e"$PATTERN"' \
+    "git grep -n -e \$'\\t'" \
+    'git grep -n -f "$FILE"' \
+    'git grep -n x -- "$DIR"' \
+    'git grep -n x -- $DIR' \
+    'git grep -n x -- src/*.py' \
+    'git grep -n x src/"$DIR"' \
+    'git grep --max-depth="$N" x' \
+    'git grep -C"$N" x' \
+    'git grep -m"$N" x' \
+    'git -C "$DIR" grep -n x'
+
+  [ "${status}" -eq 0 ] || { echo "${output}"; false; }
+}
+
 @test ".claude/settings.json 的 permissions.deny 有 Read(//**/*token*.md)" {
   run python3 -c '
 import json, sys
