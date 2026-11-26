@@ -1102,9 +1102,10 @@ def _read_error(text: str, fmt: str) -> SyntaxParse:
 @_UNREADABLE_SCALARS
 def test_a_yaml_value_unreadable_as_a_number_or_date_raises_a_parse_error_at_its_line(written):
     # 壞掉的值寫在第 2 行：行號要指到它，不是第 1 行，也不是沒有。
+    broken_line = 2
     error = _read_error(f"ok: 1\nv: {written}\n", "yaml")
 
-    assert error.line == 2
+    assert error.line == broken_line
 
 
 @_UNREADABLE_SCALARS
