@@ -11,7 +11,8 @@
 #   gh issue create|edit …   → 參數逐行記在 ${FIX}/calls.log（tab 隔開），--body-file 的內容複製到 ${FIX}/sent-body；
 #                              create 印出一個網址。${FIX}/before-send 存在時，讀 --body-file 之前先執行它（觀察「核對之後改了草稿」）；
 #                              ${FIX}/gate 存在時，先建 ${FIX}/started，等 ${FIX}/release 出現才繼續（觀察鎖）
-# 工作階段 id 以環境變數給：寫的人是 writer，審稿是 reviewer。
+# 工作階段 id 以環境變數給：寫的人是 writer，審稿是 reviewer。CLAUDE_CODE_HOST_SESSION_ID 預設清掉，比對它的規格（#428）
+# 用 as_host 另外給。
 
 setup() {
   REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../../.." && pwd)"
@@ -87,6 +88,36 @@ as() {
   else
     run env "${ID}=${who}" "${DRAFT}" "$@"
   fi
+}
+
+# as_host <工作階段 id> <HOST id> <參數…>：同 as，另外給 CLAUDE_CODE_HOST_SESSION_ID（寫成 - 時清掉變數；空字串就是空字串）。
+as_host() {
+  local who="$1" host="$2"
+  shift 2
+  if [ "${host}" = "-" ]; then
+    run env -u "${HOST_ID}" "${ID}=${who}" "${DRAFT}" "$@"
+  else
+    run env "${HOST_ID}=${host}" "${ID}=${who}" "${DRAFT}" "$@"
+  fi
+}
+
+# submit_host <HOST id> [--edit]：寫的人帶著那個 HOST id 送審（--edit 時改 #7 的本文），設好 SHA 與 SNAPDIR。
+submit_host() {
+  if [ "${2:-}" = "--edit" ]; then
+    issue_json 7 "舊的標題" "舊的本文"
+    as_host writer "$1" submit x --edit 7
+  else
+    as_host writer "$1" submit x --new
+  fi
+  [ "${status}" -eq 0 ]
+  SHA="$(printf '%s\n' "${output}" | sed -n 's/^  雜湊：//p')"
+  SNAPDIR="${DIR}/snapshots/${SHA}"
+}
+
+# reviewed_host <HOST id> <判定>：審稿工作階段帶著那個 HOST id 下判定。
+reviewed_host() {
+  opinion "$2"
+  as_host reviewer "$1" verdict x "${SHA}" "${WORK}/opinion.md"
 }
 
 # submit_new：寫的人送審，SHA 設成印出的雜湊、SNAPDIR 設成快照資料夾。
@@ -273,6 +304,199 @@ print(hashlib.sha256(title + b"\n" + open(sys.argv[2], "rb").read()).hexdigest()
 
   [ "${status}" -ne 0 ]
   cmp "${SNAPDIR}/review.md" "${WORK}/review.before"
+}
+
+# ── verdict 比對 HOST id（#428）────────────────────────────────────────────
+# 「有 HOST id」指環境變數不是空字串、也不含空白字元（和 CLAUDE_CODE_SESSION_ID 的判斷相同）。
+# 停下的規格都先留下一份判定通過的紀錄，再看停下時它有沒有被刪掉。
+
+# host_blocked <寫的人的 HOST id> <審稿的 HOST id>：先由 HOST id 不同（或兩邊都沒有）的審稿留下判定通過的紀錄，
+# 再由給定的 HOST id 下判定；status 與 output 是後者的。
+host_blocked() {
+  submit_host "$1"
+  if grep -q '^writer_host=' "${SNAPDIR}/meta"; then
+    reviewed_host other 可以開
+  else
+    reviewed_host - 可以開
+  fi
+  [ -f "${SNAPDIR}/review.md" ]
+  reviewed_host "$2" 可以開
+}
+
+@test "verdict：兩邊的 HOST id 相同、工作階段 id 不同時，以非零結束、不留下紀錄" {
+  host_blocked h1 h1
+
+  [ "${status}" -ne 0 ]
+  [ ! -e "${SNAPDIR}/review.md" ]
+}
+
+@test "verdict：兩邊的 HOST id 相同時，原因寫寫的人不自己審" {
+  host_blocked h1 h1
+  [[ "${output}" == *"寫的人不自己審"* ]]
+}
+
+@test "verdict：只有寫的人有 HOST id 時，以非零結束、不留下紀錄" {
+  host_blocked h1 -
+
+  [ "${status}" -ne 0 ]
+  [ ! -e "${SNAPDIR}/review.md" ]
+}
+
+@test "verdict：只有審稿有 HOST id 時，以非零結束、不留下紀錄" {
+  host_blocked - h2
+
+  [ "${status}" -ne 0 ]
+  [ ! -e "${SNAPDIR}/review.md" ]
+}
+
+@test "verdict：只有一邊有 HOST id 時，原因寫判斷不了是不是同一個工作階段，並寫出下一步" {
+  host_blocked h1 -
+  [[ "${output}" == *"判斷不了是不是同一個工作階段"*"下一步"* ]]
+}
+
+@test "verdict：寫的人的 HOST id 含空白字元算沒有，審稿有時以非零結束、不留下紀錄" {
+  host_blocked 'a b' h2
+
+  [ "${status}" -ne 0 ]
+  [ ! -e "${SNAPDIR}/review.md" ]
+}
+
+@test "verdict：審稿的 HOST id 是空字串算沒有，寫的人有時以非零結束、不留下紀錄" {
+  host_blocked h1 ''
+
+  [ "${status}" -ne 0 ]
+  [ ! -e "${SNAPDIR}/review.md" ]
+}
+
+@test "verdict：兩邊的 HOST id 不同時，照舊寫出紀錄，第一行另記審稿的 HOST id" {
+  submit_host h1
+  reviewed_host h2 可以開
+
+  [ "${status}" -eq 0 ]
+  [ "$(head -n 1 "${SNAPDIR}/review.md")" = "issue-review: 可以開 sha256=${SHA} reviewer=reviewer reviewer_host=h2" ]
+}
+
+@test "verdict：兩邊都沒有 HOST id 時，照舊只比對工作階段 id、寫出紀錄" {
+  submit_host -
+  reviewed_host - 可以開
+
+  [ "${status}" -eq 0 ]
+  [ "$(head -n 1 "${SNAPDIR}/review.md")" = "issue-review: 可以開 sha256=${SHA} reviewer=reviewer" ]
+}
+
+@test "verdict：兩邊的 HOST id 是含空白字元與空字串時算兩邊都沒有，照舊寫出紀錄" {
+  submit_host 'a b'
+  reviewed_host '' 可以開
+
+  [ "${status}" -eq 0 ]
+  [ "$(head -n 1 "${SNAPDIR}/review.md")" = "issue-review: 可以開 sha256=${SHA} reviewer=reviewer" ]
+}
+
+# ── create／edit 再核對 HOST id（#428）─────────────────────────────────────
+# verdict 不會寫出這幾種紀錄，所以先走一次通過的流程，再改紀錄的第一行（同上面 samereviewer 的做法）。
+
+# host_record <create|edit> <same|writeronly|revieweronly>：做出那種紀錄，清空 gh 的呼叫紀錄，再執行 create 或 edit。
+host_record() {
+  local flag='' pass=可以開
+  if [ "$1" = edit ]; then
+    flag=--edit
+    pass=可以發
+  fi
+  case "$2" in
+    same)
+      submit_host h1 "${flag}"
+      reviewed_host h2 "${pass}"
+      sed -i.bak '1s/ reviewer_host=h2$/ reviewer_host=h1/' "${SNAPDIR}/review.md"
+      ;;
+    writeronly)
+      submit_host h1 "${flag}"
+      reviewed_host h2 "${pass}"
+      sed -i.bak '1s/ reviewer_host=h2$//' "${SNAPDIR}/review.md"
+      ;;
+    revieweronly)
+      submit_host - "${flag}"
+      reviewed_host - "${pass}"
+      sed -i.bak '1s/$/ reviewer_host=h2/' "${SNAPDIR}/review.md"
+      ;;
+  esac
+  [ "${status}" -eq 0 ]
+  : >"${FIX}/calls.log"
+  as_host anyone - "$1" x
+}
+
+@test "create：紀錄的 reviewer_host 和 meta 的 writer_host 相同時，以非零結束、不呼叫寫入的 gh" {
+  host_record create same
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "create：只有 meta 有 writer_host、紀錄沒有 reviewer_host 時，以非零結束、不呼叫寫入的 gh" {
+  host_record create writeronly
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "create：只有紀錄有 reviewer_host、meta 沒有 writer_host 時，以非零結束、不呼叫寫入的 gh" {
+  host_record create revieweronly
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "edit：紀錄的 reviewer_host 和 meta 的 writer_host 相同時，以非零結束、不呼叫寫入的 gh" {
+  host_record edit same
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "edit：只有 meta 有 writer_host、紀錄沒有 reviewer_host 時，以非零結束、不呼叫寫入的 gh" {
+  host_record edit writeronly
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "edit：只有紀錄有 reviewer_host、meta 沒有 writer_host 時，以非零結束、不呼叫寫入的 gh" {
+  host_record edit revieweronly
+
+  [ "${status}" -ne 0 ]
+  [ "$(writes)" -eq 0 ]
+}
+
+@test "create／edit 因 HOST id 停下時，原因（相同：寫的人不自己審；只有一邊有：判斷不了）與下一步都寫出來" {
+  local action kind reason
+  for action in create edit; do
+    for kind in same writeronly revieweronly; do
+      rm -rf "${DIR}/snapshots"
+      host_record "${action}" "${kind}"
+      reason="判斷不了是不是同一個工作階段"
+      [ "${kind}" != same ] || reason="寫的人不自己審"
+      [[ "${output}" == *"${reason}"*"下一步"* ]] || { echo "原因或下一步不對：${action} ${kind}"; return 1; }
+    done
+  done
+}
+
+@test "create：兩邊的 HOST id 不同時照常送出" {
+  submit_host h1
+  reviewed_host h2 可以開
+  : >"${FIX}/calls.log"
+  as_host anyone - create x
+
+  [ "${status}" -eq 0 ]
+  [ "$(writes)" -eq 1 ]
+}
+
+@test "edit：兩邊的 HOST id 不同時照常送出" {
+  submit_host h1 --edit
+  reviewed_host h2 可以發
+  : >"${FIX}/calls.log"
+  as_host anyone - edit x
+
+  [ "${status}" -eq 0 ]
+  [ "$(writes)" -eq 1 ]
 }
 
 # ── create／edit 停下的情況 ───────────────────────────────────────────────
