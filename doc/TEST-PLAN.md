@@ -1979,6 +1979,8 @@ symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格
 
 **它擋不住的**：區塊的內容是不是和組織的那一份逐位元組相同——它只看兩行標記與 `* text=auto eol=lf`，全文由 base 那一邊的升級
 機制維護。工作樹裡還沒 `git add` 的檔也不看；簽出的結果（`core.autocrlf=true` 的 clone 是不是 LF）由 git 照規則處理，這支不另外量。
+區塊是不是在檔案的最上方不檢查；結尾標記之下寫一條範圍很大的 `-text`（例如 `* -text`）會蓋過區塊、等於把規則關掉，這支不會出聲，
+那裡加了什麼要靠 review。
 
 **署名防護被觀察的是「要寫進 commit、PR、issue 的文字，有沒有命中 `script/attribution-patterns.txt` 的樣式，以及檢查的那一層看不看得到那段文字」**（#405）。
 樣式清單只有一份：一行一個延伸正規式，不分大小寫、逐行比對；共同作者行、`Claude-Session:` 行、`Generated with [Claude Code]`
