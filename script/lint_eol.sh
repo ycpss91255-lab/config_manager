@@ -93,12 +93,13 @@ check_rules() {
 check_index() {
   local listing
   if ! listing="$(git ls-files --eol)"; then
-    printf 'lint_eol: 索引：失敗——git ls-files --eol 沒有成功，索引裡的換行沒有被檢查\n' >&2
-    printf 'lint_eol: 下一步：在這個簽出裡執行 git ls-files --eol 看它回報的原因\n' >&2
+    printf 'lint_eol: 索引：失敗——在 %s 執行 git ls-files --eol 沒有成功，索引裡的換行沒有被檢查\n' "$(pwd)" >&2
+    printf 'lint_eol: 下一步：在 %s 執行 git ls-files --eol 看它回報的原因\n' "$(pwd)" >&2
     return 1
   fi
 
-  local failed=0 total=0 info path attributes
+  # 違規的檔先收起來，最後和下一步一起印：逐檔各印一次下一步，檔一多就讀不到重點。
+  local report="" total=0 info path attributes
   while IFS=$'\t' read -r info path; do
     [[ -n "${info}" ]] || continue
     total=$((total + 1))
@@ -111,12 +112,12 @@ check_index() {
     case " ${attributes} " in
       *' -text '*) continue ;;
     esac
-    printf 'lint_eol: 索引：失敗——%s 在索引裡含 CRLF（%s），而且沒有 -text 屬性\n' "${path}" "${info%% *}" >&2
-    failed=1
+    report+="lint_eol: 索引：失敗——${path} 在索引裡含 CRLF（${info%% *}），而且沒有 -text 屬性"$'\n'
   done <<<"${listing}"
 
-  if ((failed != 0)); then
-    printf 'lint_eol: 下一步：執行 git add --renormalize . 後 commit（只改換行的另成一筆）；要保留 CRLF 的檔，在 %s 的結尾標記之下標成 -text\n' "${RULES_FILE}" >&2
+  if [[ -n "${report}" ]]; then
+    printf '%slint_eol: 下一步：執行 git add --renormalize . 後 commit（只改換行的另成一筆）；要保留 CRLF 的檔，在 %s 的結尾標記之下標成 -text\n' \
+      "${report}" "${RULES_FILE}" >&2
     return 1
   fi
   printf 'lint_eol: 索引：通過（追蹤的 %d 個項目裡，沒有含 CRLF 而不帶 -text 屬性的）\n' "${total}"
