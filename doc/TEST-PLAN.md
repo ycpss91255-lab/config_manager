@@ -1393,6 +1393,7 @@ schema、後端在 #40（欄位表套用 schema）之前不會送 `options`—�
 | `script/hooks/pre/run.sh`（#385） | `test/bats/unit/hooks_pre_run.bats` |
 | `script/hooks/post/run.sh`（#385） | `test/bats/unit/hooks_post_run.bats` |
 | `script/lint_agents_link.sh`（#404） | `test/bats/unit/lint_agents_link.bats` |
+| `script/lint_eol.sh`（#439） | `test/bats/unit/lint_eol.bats` |
 | `script/claude-hooks/no-attribution.sh`、`.claude/settings.json` 的 `attribution` 與 PreToolUse 接線（#405） | `test/bats/unit/no_attribution.bats` |
 | `script/claude-hooks/pr-rules.sh`、`script/claude-hooks/shell-parse.sh`（和署名 hook 共用的指令解析與旗標清單）、`.claude/settings.json` 的 PreToolUse 接線（#408） | `test/bats/unit/pr_rules.bats` |
 | `script/claude-hooks/pr-ready-reminder.sh`、`.claude/settings.json` 的 PostToolUse 與 PostToolUseFailure 接線（#408） | `test/bats/unit/pr_ready_reminder.bats` |
@@ -1953,6 +1954,33 @@ symlink、`AGENTS.md` 是一般檔、經 `CLAUDE.md` 讀得到內容）。規格
 
 **它擋不住的**：`AGENTS.md` 的內容對不對——它只看連結的形狀。在主機上把 symlink 換成一般檔、還沒 commit 時，要在本機跑
 `./script/test.sh --lint` 才抓得到；沒跑就要等 commit 之後的 CI。
+
+**`script/lint_eol.sh` 被觀察的是「換行規則在不在，以及索引裡有沒有含 CRLF 的文字檔」**（#439）。
+規則寫在根目錄的 `.gitattributes`：最上方是組織共用的換行規則區塊（ycpss91255-lab/base#2246），夾在開頭與結尾兩行標記之間，
+裡面的 `* text=auto eol=lf` 讓文字檔在 repo 與簽出裡都是 LF。兩項檢查分開判定、分開回報：**規則**看工作樹裡的 `.gitattributes`
+有沒有那兩行標記、兩者之間有沒有 `* text=auto eol=lf`；**索引**看 `git ls-files --eol` 裡 `i/crlf`、`i/mixed` 而且沒有 `-text`
+屬性的檔，逐檔指名。規格在暫存目錄建一份真的 git repo，造出各種形狀再執行，看結束碼與訊息指名的是哪一項、哪個檔。由
+`./script/test.sh --lint` 執行（子項 `eol`；CI 的 `lint` job）。被觀察的行為：
+
+| 行為 | 通過條件 |
+|---|---|
+| `.gitattributes` 有共用區塊，索引裡沒有含 CRLF 的檔 | 以 0 結束；規則與索引兩項都回報通過 |
+| 這個 repo 自己的簽出 | 以 0 結束 |
+| 沒有 `.gitattributes` | 非零結束；規則回報失敗並指名 `.gitattributes`，索引回報通過 |
+| `.gitattributes` 沒有開頭標記 | 非零結束；規則回報失敗，指名開頭標記 |
+| 有開頭標記、沒有結尾標記 | 非零結束；規則回報失敗，指名結尾標記 |
+| 區塊裡沒有 `* text=auto eol=lf` | 非零結束；規則回報失敗，指名那條規則 |
+| `* text=auto eol=lf` 寫在結尾標記之後 | 非零結束；規則回報失敗（要在兩行標記之間才算） |
+| 索引裡有含 CRLF 的文字檔（規則加上之前 commit 的，沒有 renormalize） | 非零結束；規則回報通過，索引回報失敗並指名那個檔，不指名 LF 的檔 |
+| 索引裡有 CRLF 與 LF 混用的文字檔 | 非零結束；索引回報失敗並指名那個檔 |
+| 含 CRLF 的檔帶 `-text` 屬性 | 以 0 結束；索引回報通過 |
+| 不在 git repo 裡 | 以 2 結束，說明無從檢查 |
+| 帶了不認得的參數 | 以 2 結束並印用法 |
+
+**它擋不住的**：區塊的內容是不是和組織的那一份逐位元組相同——它只看兩行標記與 `* text=auto eol=lf`，全文由 base 那一邊的升級
+機制維護。工作樹裡還沒 `git add` 的檔也不看；簽出的結果（`core.autocrlf=true` 的 clone 是不是 LF）由 git 照規則處理，這支不另外量。
+區塊是不是在檔案的最上方不檢查；結尾標記之下寫一條範圍很大的 `-text`（例如 `* -text`）會蓋過區塊、等於把規則關掉，這支不會出聲，
+那裡加了什麼要靠 review。
 
 **署名防護被觀察的是「要寫進 commit、PR、issue 的文字，有沒有命中 `script/attribution-patterns.txt` 的樣式，以及檢查的那一層看不看得到那段文字」**（#405）。
 樣式清單只有一份：一行一個延伸正規式，不分大小寫、逐行比對；共同作者行、`Claude-Session:` 行、`Generated with [Claude Code]`
@@ -2606,6 +2634,7 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | `script/lint_run_name.sh` | T19（workflow 的 run-name 分得出對應的 commit，#350） | 已落地（CI 的 `run-name` job 與本機 pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_single_task.sh` | T19（標題任務編號限制，#351） | 已落地（CI 的 `single-task` job 與本機 commit-msg／pre-push hook 執行，不由 `test.sh --lint` 執行） |
 | `script/lint_agents_link.sh` | T19（規範正本 `AGENTS.md` 與指向它的 `CLAUDE.md` symlink，git 樹與工作樹分開檢查，#404） | 已落地 |
+| `script/lint_eol.sh` | T19（換行規則：`.gitattributes` 的共用區塊與索引裡的 CRLF 分開檢查，#439） | 已落地 |
 | `script/claude-hooks/no-attribution.sh` | T19（Claude Code 的 PreToolUse hook：寫進 commit、PR、issue 之前擋下署名與 session 連結，#405） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/shell-parse.sh` | T19（Claude Code hook 共用的指令解析與 gh 旗標清單，由署名 hook、PR 規則 hook 與轉成可合併的提醒載入，#408） | 已落地（由載入它的 hook 執行，不由 `test.sh --lint` 執行） |
 | `script/claude-hooks/pr-rules.sh` | T19（Claude Code 的 PreToolUse hook：agent 不合併、PR 描述要綁一張本 repo 的 issue、一律先開草稿，#408） | 已落地（由 `.claude/settings.json` 的 PreToolUse 在主機上執行，不由 `test.sh --lint` 執行） |

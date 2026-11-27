@@ -32,6 +32,7 @@ usage() {
   --lint [<tool>]     全部 linter，或指定其中一項：
                       ruff | mypy | pylint | shellcheck | hadolint | actionlint | commit | adr | paths
                       | portability | messages | exceptions | audit | derived | interfaces | agents-link
+                      | eol
   --file <path>       單一規格檔
   --filter <regex>    符合這個樣式的規格
   --part <段>         把不帶參數的那一次執行拆成幾段分開跑，CI 用它平行：
@@ -328,7 +329,9 @@ run_lint() {
     interfaces|all) ./script/lint_test_interfaces.sh order ;;&
     # 規範正本 AGENTS.md 與指向它的 CLAUDE.md symlink：git 樹與工作樹分開檢查（#404）。只需要 git。
     agents-link|all) ./script/lint_agents_link.sh ;;&
-    ruff|mypy|pylint|shellcheck|hadolint|actionlint|commit|adr|paths|portability|messages|exceptions|audit|derived|interfaces|agents-link|all)
+    # 換行規則：.gitattributes 有組織共用的區塊、索引裡沒有含 CRLF 的文字檔（#439）。只需要 git。
+    eol|all) ./script/lint_eol.sh ;;&
+    ruff|mypy|pylint|shellcheck|hadolint|actionlint|commit|adr|paths|portability|messages|exceptions|audit|derived|interfaces|agents-link|eol|all)
       return 0
       ;;
     *) printf 'test.sh: 不認得的 linter %s。下一步：見 --help 列出的那幾項\n' "${tool}" >&2; return 2 ;;
