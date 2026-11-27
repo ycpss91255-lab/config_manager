@@ -48,7 +48,8 @@ SendMessage、先做沒被擋住的工作、工具沒有 SendMessage 時的轉�
 - **誰審**：協調工作階段另開的審稿工作階段（「另開窗口」理解成另開審稿工作階段：協調工作階段的理解）。不經 Codex；寫的人不自己審，
   協調工作階段自己寫的草稿也一樣交給另開的審稿工作階段。
 - **怎麼送**（執行細節，協調工作階段定的）：子工作階段寫好草稿後，用 SendMessage 請協調工作階段開審稿工作階段，不自己開；沒有協調
-  工作階段時，寫草稿的工作階段請維護者另開。草稿引用的遠端事實（issue、PR、commit、檔案位置）附出處，讓審稿工作階段自己核對。
+  工作階段時，寫草稿的工作階段請維護者另開，也開在桌面 app 裡（下面「審稿工作階段開在桌面 app 裡」）。草稿引用的遠端事實（issue、PR、
+  commit、檔案位置）附出處，讓審稿工作階段自己核對。
   流程（#413）：
   1. 寫的人把標題寫進 `.issue-drafts/<名稱>/title.txt`（一行）、內文寫進 `body.md`（LF 換行），執行
      `script/issue_draft.sh submit <名稱> --new`；改本文時是 `--edit <編號>`，腳本另存 GitHub 上送審當時的標題與本文。
@@ -57,7 +58,17 @@ SendMessage、先做沒被擋住的工作、工具沒有 SendMessage 時的轉�
      `script/issue_draft.sh verdict <名稱> <雜湊> <意見檔>`。
   4. 判「要修改」：寫的人改草稿，回到第 1 步（內容變了，雜湊也跟著變）。
   5. 判定通過：寫的人或協調工作階段執行 `script/issue_draft.sh create <名稱>`（改本文是 `edit <名稱>`）。送出的是判定通過、而且雜湊和
-     目前草稿相同的那一份；執行 `submit` 與 `verdict` 的工作階段 id（`CLAUDE_CODE_SESSION_ID`）相同就不放行。
+     目前草稿相同的那一份；執行 `submit` 與 `verdict` 的工作階段 id（`CLAUDE_CODE_SESSION_ID`）相同就不放行，`CLAUDE_CODE_HOST_SESSION_ID`
+     的比對見下一點。
+- **審稿工作階段開在桌面 app 裡**（#428）：`verdict` 另外比對兩邊的 `CLAUDE_CODE_HOST_SESSION_ID`（「有」指不是空字串、也不含空白字元），
+  `create`／`edit` 用審稿紀錄第一行的 `reviewer_host` 和 `meta` 的 `writer_host` 再比一次，不通過就不呼叫 gh：
+  - 兩邊都有而且相同就停：例如寫的人從自己的 Bash 啟動 `claude`，子行程的 `CLAUDE_CODE_SESSION_ID` 是新的，HOST id 卻是繼承的（PR #427 合併前
+    的實測，事實表在 #428；只測了 `claude -p`）。原因寫「寫的人不自己審」；
+  - 只有一邊有就停（協調工作階段依 #413 的 Q8 定的）：寫的人在桌面 app 裡時，審稿工作階段開在 app 以外（例如維護者在自己的終端機開的
+    `claude`），那裡沒有這個變數就會被擋。原因寫「判斷不了是不是同一個工作階段」；
+  - 兩邊都沒有：只比 `CLAUDE_CODE_SESSION_ID`；
+  - 擋不住：子行程把 HOST id 改成別的值、`submit` 與 `verdict` 都在清掉 HOST id 的子行程裡執行（經腳本檔做，hook 看不到）、請另一個桌面
+    app 工作階段（不是協調工作階段開的審稿工作階段）下判定、兩邊都沒有 HOST id 的環境；HOST id 的意思只靠那次實測推定，沒有文件佐證。
 - **審稿工作階段的寫入範圍**：只讀，指不改草稿、不改程式、不寫 GitHub。只寫兩樣：自己的意見檔（放在 repo 外），與經 `verdict` 寫的紀錄
   （在 `.issue-drafts/`，不進 git）。意見檔的最後一個非空行是 `判定：可以開`（開 issue）、`判定：可以發`（改本文）或 `判定：要修改`。
   （#413 本文的決定 4，經審稿工作階段審，不是維護者原話）
