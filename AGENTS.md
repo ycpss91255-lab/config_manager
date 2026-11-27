@@ -67,12 +67,15 @@
     之後，在 issue 留言附最後一輪的判定與適合公開的意見摘要；協調工作階段向維護者簡單說明審了哪些項目。
     出處：2026-11-24 維護者原話「不用 Codex。你再開一個窗口審核」。「另開窗口」是另開審稿工作階段、寫的人不自己審、改本文也要審，
     是協調工作階段的理解。子工作階段用 SendMessage 請協調工作階段開審稿工作階段、不自己開；沒有協調工作階段時，寫草稿的工作階段
-    請維護者另開：這兩點是執行細節（協調工作階段定的，不是原話）。
+    請維護者另開，也開在桌面 app 裡（下一點的 HOST id 比對）：這兩點是執行細節（協調工作階段定的，不是原話）。
   - **怎麼送（#413）**：寫的人把標題與內文寫進 `.issue-drafts/<名稱>/title.txt`、`body.md`，執行
     `script/issue_draft.sh submit <名稱> --new`（改本文時 `--edit <編號>`），把它印出的那段話用 SendMessage 送給協調工作階段；審稿工作
     階段照那段話審，把意見寫成檔、最後一個非空行寫判定，執行 `script/issue_draft.sh verdict <名稱> <雜湊> <意見檔>`；判定通過後，寫的人
     或協調工作階段執行 `script/issue_draft.sh create <名稱>`（改本文是 `edit <名稱>`）。送出的是判定通過而且雜湊相同的那一份；執行
-    `submit` 與 `verdict` 的工作階段 id（`CLAUDE_CODE_SESSION_ID`）相同就不放行。直接 `gh issue create`、`gh issue edit` 改標題或本文、
+    `submit` 與 `verdict` 的工作階段 id（`CLAUDE_CODE_SESSION_ID`）相同就不放行。另外比對 `CLAUDE_CODE_HOST_SESSION_ID`（#428）：兩邊都有
+    而且相同（例如從寫的人的 Bash 啟動的 `claude`），或只有一邊有，就不放行；兩邊都沒有時只比 `CLAUDE_CODE_SESSION_ID`。所以
+    **審稿工作階段要開在桌面 app 裡**：寫的人在桌面 app 裡時，審稿工作階段開在 app 以外（例如維護者在自己的終端機開的 `claude`），那裡沒有
+    這個變數就會被擋（「只有一邊有就停」是協調工作階段依 #413 的 Q8 定的）。直接 `gh issue create`、`gh issue edit` 改標題或本文、
     `gh api` 開或改 issue，由 hook 擋。
   - **勾帳本不算本文修改，不送審**：只把未勾的 `[ ]` 改成 `[x]`、行尾加 ` — <commit 主旨>`（`-`、`*`、`+` 開頭的勾選框都算），用
     `script/issue_tick.sh <編號> <條件片段> <commit 主旨>`，hook 不擋它。（協調工作階段 2026-11-25 定的例行做法）
@@ -177,7 +180,7 @@ Claude Code hook 只對 Claude Code 有效）；兩種都擋不了的部分寫�
 | 27 | 不碰 `cm_verify_*` 驗證環境 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 在清單上的入口加上指令裡的 `cm_verify` 時擋下（deny 優先於 ask） | 依連接埠連進驗證環境；不經清單上入口的寫法 |
 | 28 | 不讀 token 檔 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄），另有 `permissions.deny` 的 `Read(//**/*token*.md)` | #412：`env-rules.sh` 擋 Read、Edit、Write、Grep、Glob 與 Bash 指名檔名含 token 的 `.md`；Grep 工具、Bash 的 `grep -r`、`rg` 這類遞迴搜尋一律擋（Grep 讀不讀得到範圍裡指向 token 檔的 symlink 判斷不了、實測做不到，照 Q8 擋，2026-11-25 改）；#426：`git grep` 會讀沒追蹤檔或 repo 外檔的寫法也擋（`--no-index`、`--untracked` 與它們的縮寫，前面的 `git -c`、`--config-env`、`GIT_CONFIG…` 設定，經 `xargs`、`parallel` 執行，git 的選項或子指令來自 shell 展開）；#436：看不出內容的 git 寫法也擋（git grep 的參數會拆成好幾個字或看不出是不是選項，git 的全域選項或子指令來自展開而不管後面有沒有 grep，經 `xargs` 執行而子指令沒寫、來自展開或是替換字串，經 `watch`、`parallel` 執行的 git，程式名稱來自展開而後面有字面的 `grep`），與 `git grep -O`、`--open-files-in-pager`。下一步是用 Read 讀單一檔案、跨檔搜尋內容用 `git grep`（只搜 repo 追蹤的檔），#436 的每一種另加一句怎麼改寫 | 自寫的程式自己開檔；檔名不含 token 的 token 檔；Bash 經名字不含 token、指向 token 檔的 symlink 讀檔（hook 只看指令文字）；`git grep` 擋不住的寫法（全域或系統的 git 設定、前一段先 `export` 的 `GIT_CONFIG…`、git 的別名與腳本；程式名稱來自展開而後面沒有字面的 `grep`、包裝程式後面經 `sh -c` 執行、整段指令寫成一個字交給包裝程式、`GIT_PAGER`／`core.pager` 加 `git -p` 這類不經 `-O` 執行設定的程式）見 `doc/TEST-PLAN.md` T19 |
 | 29 | 不切換主 checkout 的分支，在 worktree 裡做 | 沒有伺服器端的一層；本機 Claude Code 由 hook 擋（hook 欄） | #412：`env-rules.sh` 擋主 checkout 裡的 `git switch`、`git checkout <分支>`／`-b`，只放行確認是 linked worktree 的目錄；判斷不了目錄也擋 | 腳本裡、git 的別名、先 `export GIT_DIR` 這類別的寫法 |
-| 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定；勾帳本不送審（「工作流程」的「開 issue 與發留言的條件」） | 沒有伺服器端的一層；本機由腳本與 Claude Code 的 hook 擋（hook 欄） | #413：`script/issue_draft.sh` 只送審稿判定通過、而且雜湊和目前草稿相同的那一份，執行 `submit` 與 `verdict` 的工作階段 id 相同就停；`script/claude-hooks/issue-rules.sh` 擋直接 `gh issue create`、`gh issue edit` 改標題或本文、`gh api` 開或改 issue、指令裡改寫工作階段 id、寫入或刪除 `.issue-drafts/<名稱>/snapshots/`；`issue-reminder.sh` 開了或改了之後提醒留言；勾帳本用 `script/issue_tick.sh` | 換一個工作階段送審或下判定（只比對 id，分不出內容是誰寫的）；改腳本、別處的同名腳本、整段是變數的路徑、自寫程式寫紀錄、`gh alias`；網頁上開或改、cloud 工作階段、`disableAllHooks`；審得好不好；開了之後的留言（只提醒） |
+| 30 | 開 issue 前與改 issue 本文前，草稿交給協調工作階段另開的審稿工作階段審，不經 Codex、寫的人不自己審；開了或改了之後留言附最後一輪的判定；勾帳本不送審（「工作流程」的「開 issue 與發留言的條件」） | 沒有伺服器端的一層；本機由腳本與 Claude Code 的 hook 擋（hook 欄） | #413：`script/issue_draft.sh` 只送審稿判定通過、而且雜湊和目前草稿相同的那一份，執行 `submit` 與 `verdict` 的工作階段 id 相同就停，`CLAUDE_CODE_HOST_SESSION_ID` 兩邊相同或只有一邊有也停（#428）；`script/claude-hooks/issue-rules.sh` 擋直接 `gh issue create`、`gh issue edit` 改標題或本文、`gh api` 開或改 issue、指令裡改寫工作階段 id、寫入或刪除 `.issue-drafts/<名稱>/snapshots/`；`issue-reminder.sh` 開了或改了之後提醒留言；勾帳本用 `script/issue_tick.sh` | 換一個工作階段送審或下判定（只比對 id，分不出內容是誰寫的；另一個桌面 app 工作階段的 HOST id 不同，分不出來）；子行程把 HOST id 改成別的值、`submit` 與 `verdict` 都在清掉 HOST id 的子行程裡執行、兩邊都沒有 HOST id 的環境（只比 `CLAUDE_CODE_SESSION_ID`）；HOST id 的意思只靠一次實測推定（#428）；改腳本、別處的同名腳本、整段是變數的路徑、自寫程式寫紀錄、`gh alias`；網頁上開或改、cloud 工作階段、`disableAllHooks`；審得好不好；開了之後的留言（只提醒） |
 | 31 | 判「可以開」就開，不必問維護者；不亂開、不開了又關；owner 層級或架構的決定仍等維護者 | 只靠文字 | 沒有 | 整條 |
 | 32 | 動工前先查證現況（main、`git log`、`doc/TEST-PLAN.md`） | 只靠文字 | 沒有 | 整條 |
 | 33 | 回報或提問前先讀 issue 最新內容；提案、定案、實驗結果分開；已定案不重問；提問前逐題對照全部定案 | 只靠文字 | 沒有 | 整條 |

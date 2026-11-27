@@ -2414,7 +2414,8 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 
 **`script/issue_draft.sh`** 被觀察的是「送出的標題與內文，是不是審稿工作階段判定通過的那一份」。草稿在腳本所在簽出頂層的
 `.issue-drafts/<名稱>/`，雜湊是「標題、換行、內文」的 sha256；執行 `submit` 與 `verdict` 的工作階段 id 是環境變數
-`CLAUDE_CODE_SESSION_ID`。規格把腳本複製到暫存的樹執行。被觀察的行為：
+`CLAUDE_CODE_SESSION_ID`，另外比對 `CLAUDE_CODE_HOST_SESSION_ID`（#428；「有」指不是空字串、也不含空白字元，規格用環境變數模擬兩邊）。
+規格把腳本複製到暫存的樹執行。被觀察的行為：
 
 | 行為 | 通過條件 |
 |---|---|
@@ -2426,6 +2427,9 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
 | `verdict`：意見檔最後一個非空行是 `判定：可以開`／`可以發`／`要修改` | 紀錄第一行是判定、雜湊與審稿的 id，之後是意見檔全文 |
 | `verdict`：執行的 id 和寫的人相同、id 是空的、快照不存在或被改過、意見檔讀不到或是空的、沒有判定、判定和用途對不上 | 非零結束並寫出下一步；原本判定通過的紀錄也刪掉 |
 | `verdict`：鎖在別人手上 | 非零結束，紀錄不動 |
+| `verdict`：兩邊的 HOST id 相同（工作階段 id 不同）、只有一邊有（寫的人有或審稿有；空字串與含空白字元算沒有）（#428） | 非零結束、不留下紀錄（原本判定通過的也刪掉）；相同時原因寫「寫的人不自己審」，只有一邊有時原因寫「判斷不了是不是同一個工作階段」，並寫出下一步 |
+| `verdict`：兩邊的 HOST id 不同、兩邊都沒有（#428） | 照舊寫出紀錄；審稿有 HOST id 時第一行另記 `reviewer_host` |
+| `create`／`edit`：紀錄第一行的 `reviewer_host` 和 `meta` 的 `writer_host` 相同，或只有一邊有（#428） | 非零結束、不呼叫寫入的 gh，原因與下一步同上；兩邊不同時照常送出 |
 | `create`／`edit`：審完又改了草稿、判「要修改」、沒有紀錄或快照或 `meta`、讀不到草稿、審稿 id 和寫的人相同、用途對不上、命中署名樣式、已經開過、送審之後 GitHub 上的標題或本文變了 | 非零結束、不呼叫寫入的 gh，寫出下一步 |
 | `create`／`edit` 判定通過、雜湊相符 | gh 收到 `issue create`（或 `issue edit <編號>`），旗標只有 `--repo`、`--title`、`--body-file`，`--repo` 是 `github.com/ycpss91255-lab/config_manager`（設了 `GH_REPO`、`GH_HOST` 也一樣）；內文和快照逐位元組相同，核對之後改了 `body.md` 也一樣；`create` 寫出 `published` |
 | 鎖：兩個 `create` 同時跑；`create` 拿著鎖時的 `verdict`；鎖在別人手上時的 `create` | 後來的那一個非零結束、不呼叫 gh、紀錄不動 |
@@ -2455,6 +2459,9 @@ bypassPermissions 模式下仍會問，hook 回 ask 在這個模式下會不會�
   寫進快照、整段是變數的路徑（`rm "$P"`）、`gh alias`。紀錄沒有簽章。
 - 身分：只比對執行 `submit` 與執行 `verdict` 的工作階段 id 不同，分不出內容是誰寫的、判定是不是協調工作階段另開的審稿工作階段下的；
   換一個工作階段送審或下判定就繞得過。同一個工作階段的 id 會不會中途改變沒有查證。
+- HOST id（#428 的「擋不住」）：子行程把 HOST id 改成別的值；`submit` 與 `verdict` 都在清掉 HOST id 的子行程裡執行（變成兩邊都沒有，
+  只比 `CLAUDE_CODE_SESSION_ID`）；請另一個桌面 app 工作階段下判定（HOST id 不同）；兩邊都沒有 HOST id 的環境；HOST id 的意思只靠
+  一次實測推定，沒有文件佐證。
 - 刪掉整個 `.issue-drafts/<名稱>/` 再重送、重審，仍可能開出第二張（要再經過一次審稿）。
 - 審得好不好；網頁上開或改的 issue、cloud 工作階段、`disableAllHooks`、在終端機直接執行；開了之後的留言（只提醒）。
 - 勾帳本：主旨是真的 commit 主旨，但 commit 可以是為了勾帳本另做的；勾得對不對要人看。`edit` 與 `issue_tick.sh` 最後一次讀取和送出
