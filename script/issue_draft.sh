@@ -12,8 +12,9 @@
 #
 #   快照  .issue-drafts/<名稱>/snapshots/<雜湊>/：title.txt、body.md、meta（雜湊、用途、執行 submit 的工作階段 id；改本文時另有
 #         base/title.txt、base/body.md 與它們的雜湊）、review.md（審稿紀錄）、published（開出的網址）
-#   身分  工作階段 Bash 環境裡的 CLAUDE_CODE_SESSION_ID：執行 submit 的和執行 verdict 的不能是同一個。有 CLAUDE_CODE_HOST_SESSION_ID
-#         也記下，給協調工作階段對照（腳本不核對它）
+#   身分  工作階段 Bash 環境裡的 CLAUDE_CODE_SESSION_ID：執行 submit 的和執行 verdict 的不能是同一個。CLAUDE_CODE_HOST_SESSION_ID
+#         另外比對（#428）：兩邊都有而且相同（例如從寫的人的 Bash 啟動的 claude），或只有一邊有，就停；兩邊都沒有時只比
+#         CLAUDE_CODE_SESSION_ID。verdict 比環境變數，create、edit 比紀錄第一行的 reviewer_host 和 meta 的 writer_host
 #   鎖    四個動作共用 mkdir .issue-drafts/<名稱>/.lock；create、edit 一直拿到 gh 結束
 #   目標  寫死成 github.com 上的本 repo，不受 GH_REPO、GH_HOST 影響；gh 只帶 --repo、--title、--body-file
 #
@@ -136,9 +137,24 @@ def check_attribution(title, body, what):
                                "拿掉 Claude 署名與 session 連結（AGENTS.md「Commit 訊息」）再執行")
 
 
+def present(value):
+    """「有 id」：不是空字串、也不含空白字元；沒有就回空字串。"""
+    return value if value and re.fullmatch(r"\S+", value) else ""
+
+
 def session(name):
-    value = os.environ.get(name, "")
-    return value if re.fullmatch(r"\S+", value) else ""
+    return present(os.environ.get(name, ""))
+
+
+def check_hosts(writer_host, reviewer_host, who, step):
+    """比對兩邊的 CLAUDE_CODE_HOST_SESSION_ID（#428）：兩邊都有而且相同，或只有一邊有，就停；兩邊都沒有時不比。"""
+    if writer_host and reviewer_host:
+        if writer_host == reviewer_host:
+            raise Stop(f"{who}和執行 submit 的工作階段在同一個桌面 app 工作階段裡（例如從它的 Bash 啟動的 claude）："
+                       "寫的人不自己審（#428）", step)
+    elif writer_host or reviewer_host:
+        raise Stop(f"{who}和執行 submit 的工作階段，兩邊的環境不同（一邊在桌面 app 裡、一邊不在），"
+                   "判斷不了是不是同一個工作階段（#428）", f"{step}；審稿工作階段要和寫的人一樣開在桌面 app 裡")
 
 
 # ── 草稿資料夾、鎖、快照 ──────────────────────────────────────────────────
@@ -357,6 +373,9 @@ def verdict(args):
         if meta["writer"] == reviewer:
             raise Stop("執行 verdict 的工作階段就是執行 submit 的那一個：寫的人不自己審（#413）",
                        "用 SendMessage 請協調工作階段另開審稿工作階段，由它執行 verdict")
+        reviewer_host = session("CLAUDE_CODE_HOST_SESSION_ID")
+        check_hosts(present(meta.get("writer_host")), reviewer_host, "這個工作階段",
+                    "用 SendMessage 請協調工作階段另開審稿工作階段，由它執行 verdict")
         _, _, actual = read_pair(snap, "快照")
         if actual != sha or meta["sha256"] != sha:
             raise Stop(f"快照 {snap} 重算的雜湊是 {actual}，和參數或 meta 對不上", "請寫的人重新 submit 送審")
@@ -380,9 +399,8 @@ def verdict(args):
             purpose = "開新 issue" if meta["kind"] == "new" else "改本文"
             raise Stop(f"判定「{result}」和用途對不上：這份快照是{purpose}", f"最後一行寫「判定：{allowed[0]}」或「判定：{allowed[1]}」")
         header = f"issue-review: {result} sha256={sha} reviewer={reviewer}"
-        host = session("CLAUDE_CODE_HOST_SESSION_ID")
-        if host:
-            header += f" reviewer_host={host}"
+        if reviewer_host:
+            header += f" reviewer_host={reviewer_host}"
         write_atomic(record, (header + "\n" + text).encode("utf-8"))
     print(f"{TAG}: 審稿紀錄寫好了（#413）：{record}")
     print(f"  判定：{result}")
@@ -421,7 +439,7 @@ def send(args, action):
         found = RECORD.match(first)
         if not found:
             raise Stop(f"審稿紀錄 {record} 的第一行讀不出判定、雜湊與審稿的工作階段", "請審稿工作階段重新執行 verdict")
-        result, recorded, reviewer, _ = found.groups()
+        result, recorded, reviewer, reviewer_host = found.groups()
         if recorded != sha:
             raise Stop(f"審稿紀錄的雜湊 {recorded} 和目前的草稿 {sha} 不同", "重新 submit 送審")
         if result != PASS[expected]:
@@ -429,6 +447,8 @@ def send(args, action):
         if not reviewer or not meta["writer"] or reviewer == meta["writer"]:
             raise Stop("審稿紀錄的審稿工作階段和執行 submit 的是同一個：寫的人不自己審（#413）",
                        "用 SendMessage 請協調工作階段另開審稿工作階段，重新執行 verdict")
+        check_hosts(present(meta.get("writer_host")), present(reviewer_host), "審稿紀錄的審稿工作階段",
+                    "用 SendMessage 請協調工作階段另開審稿工作階段，重新執行 verdict")
         check_attribution(title, body, "送出用的快照")
         outbox = tempfile.mkdtemp(prefix="issue-draft-")
         try:
@@ -472,7 +492,7 @@ def main():
         else:
             raise Stop(f"不認得的動作或參數 {' '.join(ARGS)!r}", USAGE)
     except Stop as stopped:
-        suffix = "。" if "#413" in stopped.why else "（#413）。"
+        suffix = "。" if re.search(r"（#\d+）$", stopped.why) else "（#413）。"  # 原因已經以（#編號）結尾就不再加
         print(f"{TAG}: {stopped.why}{suffix}", file=sys.stderr)
         print(f"{TAG}: 下一步：{stopped.step}", file=sys.stderr)
         sys.exit(1)
